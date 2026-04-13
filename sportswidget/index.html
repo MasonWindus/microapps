@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<!-- v8 -->
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MLB</title>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; }
+  body { background: #111d11; font-family: 'Oswald', sans-serif; color: #ddd8c0; text-transform: uppercase; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.15} }
+  input, button { font-family: 'Oswald', sans-serif; text-transform: uppercase; }
+  .tb { display:block; width:100%; text-align:left; background:none; border:none;
+        border-bottom:1px solid #1e341e; color:#3d5e3d; font-size:13px; font-weight:400;
+        padding:7px 12px; cursor:pointer; letter-spacing:.04em; }
+  .tb.on { color:#a8c898; }
+  .srow { display:flex; align-items:center; padding:5px 10px; border-bottom:1px solid #1a2e1a; font-size:16px; font-weight:700; letter-spacing:.05em; }
+  .srow:last-child { border-bottom:none; }
+</style>
+</head>
+<body>
+<div style="position:fixed;top:0;right:0;background:#162416;color:#3d5e3d;font-family:'Oswald',sans-serif;font-size:9px;padding:2px 6px;z-index:9999;pointer-events:none;letter-spacing:.1em;">V8</div>
+<div id="app" style="height:100%;overflow:hidden;"></div>
+<script>
+
+const API    = 'https://statsapi.mlb.com/api/v1';
+const SEASON = 2026;
+const MAX    = 6;
+
+const TEAMS = [
+  { id:108, name:'Los Angeles Angels',    abbr:'LAA', accent:'#BA0021' },
+  { id:109, name:'Arizona Diamondbacks',  abbr:'ARI', accent:'#A71930' },
+  { id:110, name:'Baltimore Orioles',     abbr:'BAL', accent:'#DF4601' },
+  { id:111, name:'Boston Red Sox',        abbr:'BOS', accent:'#BD3039' },
+  { id:112, name:'Chicago Cubs',          abbr:'CHC', accent:'#0E3386' },
+  { id:113, name:'Cincinnati Reds',       abbr:'CIN', accent:'#C6011F' },
+  { id:114, name:'Cleveland Guardians',   abbr:'CLE', accent:'#E31937' },
+  { id:115, name:'Colorado Rockies',      abbr:'COL', accent:'#4A3728' },
+  { id:116, name:'Detroit Tigers',        abbr:'DET', accent:'#FA4616' },
+  { id:117, name:'Houston Astros',        abbr:'HOU', accent:'#EB6E1F' },
+  { id:118, name:'Kansas City Royals',    abbr:'KC',  accent:'#004687' },
+  { id:119, name:'Los Angeles Dodgers',   abbr:'LAD', accent:'#005A9C' },
+  { id:120, name:'Washington Nationals',  abbr:'WSH', accent:'#AB0003' },
+  { id:121, name:'New York Mets',         abbr:'NYM', accent:'#FF5910' },
+  { id:133, name:'Athletics',             abbr:'ATH', accent:'#EFB21E' },
+  { id:134, name:'Pittsburgh Pirates',    abbr:'PIT', accent:'#FDB827' },
+  { id:135, name:'San Diego Padres',      abbr:'SD',  accent:'#7F411C' },
+  { id:136, name:'Seattle Mariners',      abbr:'SEA', accent:'#0C2C56' },
+  { id:137, name:'San Francisco Giants',  abbr:'SF',  accent:'#FD5A1E' },
+  { id:138, name:'St. Louis Cardinals',   abbr:'STL', accent:'#C41E3A' },
+  { id:139, name:'Tampa Bay Rays',        abbr:'TB',  accent:'#8FBCE6' },
+  { id:140, name:'Texas Rangers',         abbr:'TEX', accent:'#003278' },
+  { id:141, name:'Toronto Blue Jays',     abbr:'TOR', accent:'#134A8E' },
+  { id:142, name:'Minnesota Twins',       abbr:'MIN', accent:'#002B5C' },
+  { id:143, name:'Philadelphia Phillies', abbr:'PHI', accent:'#E81828' },
+  { id:144, name:'Atlanta Braves',        abbr:'ATL', accent:'#CE1141' },
+  { id:145, name:'Chicago White Sox',     abbr:'CWS', accent:'#C4CED4' },
+  { id:146, name:'Miami Marlins',         abbr:'MIA', accent:'#00A3E0' },
+  { id:147, name:'New York Yankees',      abbr:'NYY', accent:'#C4CED4' },
+  { id:158, name:'Milwaukee Brewers',     abbr:'MIL', accent:'#FFC52F' },
+];
+
+// ── CACHE ─────────────────────────────────────────────────────────────────────
+const TTL = { standings: 86400000, games: 300000 };
+
+const Cache = {
+  _k: function(k) { return 'mlbt_' + k; },
+  get: function(k) {
+    try {
+      var r = localStorage.getItem(this._k(k));
+      if (!r) return null;
+      var o = JSON.parse(r);
+      if (o.ttl !== null && Date.now() - o.ts > o.ttl) { this.del(k); return null; }
+      return o.value;
+    } catch(e) { return null; }
+  },
+  set: function(k, v, ttl) {
+    try { localStorage.setItem(this._k(k), JSON.stringify({ value: v, ts: Date.now(), ttl: ttl })); } catch(e) {}
+  },
+  del: function(k) { try { localStorage.removeItem(this._k(k)); } catch(e) {} },
+  age: function(k) {
+    try { var r = localStorage.getItem(this._k(k)); return r ? Date.now() - JSON.parse(r).ts : null; } catch(e) { return null; }
+  },
+};
+
+// ── HELPERS ───────────────────────────────────────────────────────────────────
+function dateStr(d) { return d.toISOString().slice(0, 10); }
+function todayStr() { return dateStr(new Date()); }
+function fmtDate(ms) { return ms ? new Date(ms).toLocaleDateString('en-US', { month:'short', day:'numeric' }) : '-'; }
+function fmtTime(ms) { return ms ? new Date(ms).toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' }) : ''; }
+function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function fmtAge(ms) {
+  if (ms == null) return '';
+  var s = Math.floor(ms / 1000);
+  if (s < 15) return 'just now';
+  if (s < 60) return s + 's ago';
+  var m = Math.floor(s / 60);
+  return m < 60 ? m + 'm ago' : Math.floor(m / 60) + 'h ago';
+}
+function getTeam(id) {
+  for (var i = 0; i < TEAMS.length; i++) { if (TEAMS[i].id === id) return TEAMS[i]; }
+  return { name:'Unknown', abbr:'???', accent:'#555' };
+}
+function shortDiv(name) {
+  return (name || '').replace('American League', 'AL').replace('National League', 'NL').toUpperCase();
+}
+function fmtGB(gb) {
+  if (!gb || gb === '-' || gb === '-.-' || gb === '-.0') return '--';
+  return String(gb);
+}
+
+// ── API ───────────────────────────────────────────────────────────────────────
+async function apiFetchStandings() {
+  var r = await fetch(API + '/standings?leagueId=103,104&season=' + SEASON + '&hydrate=division,league,team');
+  if (!r.ok) throw new Error('standings HTTP ' + r.status);
+  var d = await r.json();
+  var byTeam = {};
+  var byDiv  = {};
+  for (var i = 0; i < (d.records || []).length; i++) {
+    var rec  = d.records[i];
+    var dn   = '';
+    if (rec.division) { dn = rec.division.name || rec.division.nameShort || rec.division.abbreviation || ''; }
+    if (!dn) continue;
+    var divArr = [];
+    for (var j = 0; j < (rec.teamRecords || []).length; j++) {
+      var tr  = rec.teamRecords[j];
+      var tid = tr.team.id;
+      var abbr = getTeam(tid).abbr;
+      var gb   = tr.gamesBack || '-';
+      var rank = parseInt(tr.divisionRank) || (j + 1);
+      var entry = { id: tid, abbr: abbr, wins: tr.wins, losses: tr.losses, rank: rank, gb: gb, div: dn };
+      byTeam[tid] = entry;
+      divArr.push(entry);
+    }
+    divArr.sort(function(a, b) { return a.rank - b.rank; });
+    byDiv[dn] = divArr;
+  }
+  return { byTeam: byTeam, byDiv: byDiv };
+}
+
+async function apiFetchSchedule(teamId) {
+  var past   = dateStr(new Date(Date.now() - 14 * 86400000));
+  var future = dateStr(new Date(Date.now() + 14 * 86400000));
+  var r = await fetch(API + '/schedule?sportId=1&teamId=' + teamId
+        + '&startDate=' + past + '&endDate=' + future + '&gameType=R,S');
+  if (!r.ok) throw new Error('schedule HTTP ' + r.status);
+  var d = await r.json();
+
+  var live = [], recent = [], upcoming = [];
+  var tday = todayStr();
+
+  for (var i = 0; i < (d.dates || []).length; i++) {
+    var day = d.dates[i];
+    for (var j = 0; j < (day.games || []).length; j++) {
+      var g     = day.games[j];
+      var state = (g.status && g.status.abstractGameState) || '';
+      var home  = g.teams.home.team.id === teamId;
+      var mine  = home ? g.teams.home : g.teams.away;
+      var opp   = home ? g.teams.away : g.teams.home;
+      var inning = '';
+      if (state === 'Live' && g.linescore) {
+        var half = g.linescore.inningHalf === 'Bottom' ? 'Bot' : 'Top';
+        inning = half + ' ' + (g.linescore.currentInningOrdinal || '');
+      }
+      var e = {
+        dateMs:   new Date(g.gameDate).getTime(),
+        dateDay:  day.date,
+        home:     home,
+        oppId:    opp.team.id,
+        opponent: opp.team.name,
+        myScore:  mine.score != null ? mine.score : null,
+        oppScore: opp.score  != null ? opp.score  : null,
+        win:      state === 'Final' ? (mine.isWinner || false) : null,
+        state:    state,
+        inning:   inning,
+      };
+      if (state === 'Live')       live.push(e);
+      else if (state === 'Final') recent.push(e);
+      else                        upcoming.push(e);
+    }
+  }
+
+  recent.sort(function(a, b) { return b.dateMs - a.dateMs; });
+  upcoming.sort(function(a, b) { return a.dateMs - b.dateMs; });
+
+  var todayGame = null, nextGame = null;
+  for (var k = 0; k < upcoming.length; k++) {
+    if (upcoming[k].dateDay === tday) { todayGame = upcoming[k]; break; }
+  }
+  if (!todayGame) nextGame = upcoming[0] || null;
+
+  return { live: live, recent: recent.slice(0, 5), todayGame: todayGame, next: nextGame };
+}
+
+// ── STATE ─────────────────────────────────────────────────────────────────────
+function initState() {
+  var ids = Cache.get('teamIds') || [];
+  var cached = Cache.get('stv8');
+  var standings = (cached && cached.byTeam) ? cached : null;
+  var games = {};
+  for (var i = 0; i < ids.length; i++) {
+    var cg = Cache.get('g' + ids[i]);
+    if (cg) games[ids[i]] = cg;
+  }
+  return {
+    view:      ids.length ? 'dashboard' : 'setup',
+    teamIds:   ids,
+    pending:   ids.slice(),
+    search:    '',
+    standings: standings,
+    games:     games,
+    loading:   false,
+    status:    '',
+    error:     null,
+  };
+}
+
+var S, _fetching;
+
+function set(patch) {
+  S = Object.assign({}, S, patch);
+  render();
+}
+
+function render() {
+  document.getElementById('app').innerHTML = S.view === 'setup' ? html_setup() : html_dash();
+  if (S.view === 'setup') bind_setup();
+  else                    bind_dash();
+
+  if (S.view === 'dashboard' && !S.loading && !_fetching) {
+    var stale = false;
+    for (var i = 0; i < S.teamIds.length; i++) {
+      var a = Cache.age('g' + S.teamIds[i]);
+      if (a == null || a > TTL.games) { stale = true; break; }
+    }
+    if (stale) { _fetching = true; setTimeout(function() { _fetching = false; fetchAll(); }, 0); }
+  }
+}
+
+// ── SETUP VIEW ────────────────────────────────────────────────────────────────
+function teamRowsHTML(list, pending) {
+  return list.map(function(t) {
+    var on = pending.indexOf(t.id) !== -1;
+    return '<button class="tb' + (on ? ' on' : '') + '" data-id="' + t.id + '">'
+      + '<span style="font-weight:700;">' + t.abbr + '</span>'
+      + ' <span style="font-weight:400;font-size:12px;">' + esc(t.name) + '</span>'
+      + (on ? '<span style="color:#4ade80;float:right;">+</span>' : '')
+      + '</button>';
+  }).join('');
+}
+
+function html_setup() {
+  var q    = S.search.toLowerCase();
+  var list = q ? TEAMS.filter(function(t) {
+    return t.name.toLowerCase().indexOf(q) !== -1 || t.abbr.toLowerCase().indexOf(q) !== -1;
+  }) : TEAMS;
+  var n = S.pending.length;
+  return '<div style="height:100%;display:flex;flex-direction:column;overflow:hidden;">'
+    + '<div style="flex-shrink:0;display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:#162416;border-bottom:2px solid #1e341e;">'
+    + '<span style="color:#3d5e3d;font-size:11px;letter-spacing:.2em;">MLB TERMINAL</span>'
+    + '<div style="display:flex;gap:10px;align-items:center;">'
+    + '<span style="color:#2a4a2a;font-size:11px;">' + n + ' / ' + MAX + '</span>'
+    + '<button id="doneBtn"' + (n ? '' : ' disabled') + ' style="background:none;border:1px solid ' + (n ? '#3a5e3a' : '#223222') + ';color:' + (n ? '#a8c898' : '#2a4a2a') + ';font-size:11px;padding:3px 10px;border-radius:1px;cursor:pointer;letter-spacing:.1em;">DONE</button>'
+    + '</div></div>'
+    + '<input id="srch" type="text" placeholder="Search team..." autocomplete="off" value="' + esc(S.search) + '" '
+    + 'style="flex-shrink:0;width:100%;background:#142014;border:none;border-bottom:2px solid #1e341e;'
+    + 'color:#ddd8c0;font-size:13px;font-weight:700;letter-spacing:.05em;padding:9px 12px;outline:none;"/>'
+    + '<div id="tlist" style="flex:1;overflow-y:auto;">' + teamRowsHTML(list, S.pending) + '</div>'
+    + '</div>';
+}
+
+function bindTeamBtns() {
+  var btns = document.querySelectorAll('.tb');
+  for (var i = 0; i < btns.length; i++) {
+    (function(btn) {
+      btn.addEventListener('click', function() {
+        var id  = parseInt(btn.getAttribute('data-id'), 10);
+        var idx = S.pending.indexOf(id);
+        var np;
+        if (idx !== -1) {
+          np = S.pending.filter(function(x) { return x !== id; });
+        } else if (S.pending.length < MAX) {
+          np = S.pending.concat([id]);
+        } else { return; }
+        set({ pending: np });
+      });
+    })(btns[i]);
+  }
+}
+
+function bind_setup() {
+  var inp = document.getElementById('srch');
+  if (inp) {
+    inp.addEventListener('input', function() {
+      S = Object.assign({}, S, { search: this.value });
+      var q    = this.value.toLowerCase();
+      var list = q ? TEAMS.filter(function(t) {
+        return t.name.toLowerCase().indexOf(q) !== -1 || t.abbr.toLowerCase().indexOf(q) !== -1;
+      }) : TEAMS;
+      var tl = document.getElementById('tlist');
+      if (tl) { tl.innerHTML = teamRowsHTML(list, S.pending); bindTeamBtns(); }
+    });
+  }
+  var done = document.getElementById('doneBtn');
+  if (done) {
+    done.addEventListener('click', function() {
+      if (!S.pending.length) return;
+      var ids = S.pending.slice();
+      Cache.set('teamIds', ids, null);
+      var games = {};
+      for (var i = 0; i < ids.length; i++) { if (S.games[ids[i]]) games[ids[i]] = S.games[ids[i]]; }
+      set({ view: 'dashboard', teamIds: ids, games: games });
+    });
+  }
+  bindTeamBtns();
+}
+
+// ── STANDINGS LOGIC ───────────────────────────────────────────────────────────
+function standingsMeta() {
+  var st  = S.standings;
+  var ids = S.teamIds;
+  if (!st || !st.byTeam) return { mode: 'none' };
+
+  var divs = {};
+  for (var i = 0; i < ids.length; i++) {
+    var t = st.byTeam[ids[i]];
+    if (t) divs[t.div] = true;
+  }
+  var divNames = Object.keys(divs);
+
+  if (divNames.length === 1 && st.byDiv && st.byDiv[divNames[0]]) {
+    return { mode: 'full', divName: divNames[0], rows: st.byDiv[divNames[0]] };
+  }
+  var rows = [];
+  for (var j = 0; j < ids.length; j++) {
+    var e = st.byTeam[ids[j]];
+    if (e) rows.push(e);
+  }
+  rows.sort(function(a, b) { return a.div < b.div ? -1 : a.div > b.div ? 1 : a.rank - b.rank; });
+  return { mode: 'multi', rows: rows };
+}
+
+// ── DASHBOARD ─────────────────────────────────────────────────────────────────
+function html_dash() {
+  var gAge = null;
+  for (var i = 0; i < S.teamIds.length; i++) {
+    var a = Cache.age('g' + S.teamIds[i]);
+    if (a != null && (gAge == null || a < gAge)) gAge = a;
+  }
+  var ageLabel = S.loading ? (S.status || 'LOADING...') : (gAge != null ? fmtAge(gAge) : '');
+
+  var ctrlBar = '<div style="flex-shrink:0;display:flex;justify-content:space-between;align-items:center;padding:5px 10px;background:#162416;border-bottom:2px solid #1e341e;">'
+    + '<span style="color:#2a4a2a;font-size:12px;letter-spacing:.1em;">' + esc(ageLabel) + '</span>'
+    + '<div style="display:flex;gap:6px;">'
+    + '<button id="refreshBtn"' + (S.loading ? ' disabled' : '') + ' style="background:none;border:1px solid #263a26;color:' + (S.loading ? '#263a26' : '#4a6e4a') + ';font-size:12px;padding:3px 10px;border-radius:1px;cursor:pointer;letter-spacing:.1em;">' + (S.loading ? '...' : 'REFRESH') + '</button>'
+    + '<button id="editBtn" style="background:none;border:1px solid #263a26;color:#4a6e4a;font-size:12px;padding:3px 10px;border-radius:1px;cursor:pointer;letter-spacing:.1em;">EDIT</button>'
+    + '</div></div>';
+
+  return '<div style="height:100%;display:flex;flex-direction:column;">'
+    + ctrlBar
+    + '<div style="flex:1;display:flex;flex-direction:column;min-height:0;">'
+    + '<div style="flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;border-bottom:2px solid #1e341e;">' + html_sec_standings() + '</div>'
+    + '<div style="flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;border-bottom:2px solid #1e341e;">' + html_sec_today() + '</div>'
+    + '<div style="flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;">' + html_sec_last5() + '</div>'
+    + '</div>'
+    + '</div>';
+}
+
+function secHeader(title, cols) {
+  return '<div style="flex-shrink:0;display:flex;align-items:center;padding:4px 10px;background:#162416;border-bottom:1px solid #1e341e;">'
+    + '<span style="flex:1;font-size:12px;color:#3d5e3d;letter-spacing:.2em;">' + title + '</span>'
+    + (cols || '')
+    + '</div>';
+}
+
+// ── STANDINGS SECTION ─────────────────────────────────────────────────────────
+function html_sec_standings() {
+  var meta = standingsMeta();
+  var selectedIds = S.teamIds;
+
+  var headerRight = '<span style="width:28px;text-align:right;font-size:11px;color:#3d5e3d;letter-spacing:.1em;">W</span>'
+    + '<span style="width:28px;text-align:right;font-size:11px;color:#3d5e3d;letter-spacing:.1em;">L</span>'
+    + '<span style="width:36px;text-align:right;font-size:11px;color:#2a4a2a;letter-spacing:.1em;">GB</span>';
+
+  var title = meta.mode === 'full' ? shortDiv(meta.divName) : 'STANDINGS';
+  var hdr = secHeader(title, headerRight);
+
+  if (meta.mode === 'none') {
+    return hdr + '<div class="srow" style="color:#2a4a2a;">LOADING...</div>';
+  }
+
+  var rows = meta.rows.map(function(row) {
+    var isSelected = selectedIds.indexOf(row.id) !== -1;
+    var nameColor  = isSelected ? '#ffffff' : '#3d5e3d';
+    var numColor   = isSelected ? '#ddd8c0' : '#2e4e2e';
+    var gbColor    = isSelected ? '#5a7e5a' : '#243a24';
+    return '<div class="srow">'
+      + '<span style="flex:1;color:' + nameColor + ';font-size:13px;">' + esc(row.abbr) + '</span>'
+      + '<span style="width:28px;text-align:right;color:' + numColor + ';">' + esc(String(row.wins)) + '</span>'
+      + '<span style="width:28px;text-align:right;color:' + numColor + ';">' + esc(String(row.losses)) + '</span>'
+      + '<span style="width:36px;text-align:right;color:' + gbColor + ';font-size:13px;">' + esc(fmtGB(row.gb)) + '</span>'
+      + '</div>';
+  }).join('');
+
+  return hdr + rows;
+}
+
+// ── TODAY SECTION ─────────────────────────────────────────────────────────────
+function html_sec_today() {
+  var hdr = secHeader('TODAY');
+  var rows = S.teamIds.map(function(id) {
+    var team = getTeam(id);
+    var gd   = S.games[id];
+
+    if (!gd) {
+      var loadTxt = S.loading ? 'LOADING...' : '--';
+      return '<div class="srow"><span style="width:40px;color:#ffffff;">' + esc(team.abbr) + '</span>'
+        + '<span style="color:#2a4a2a;font-size:11px;">' + loadTxt + '</span></div>';
+    }
+
+    // Live game
+    if (gd.live && gd.live.length) {
+      var g = gd.live[0];
+      var opp = getTeam(g.oppId);
+      var oppName = opp.abbr !== '???' ? opp.abbr : esc(g.opponent).slice(0, 9);
+      var hasScore = g.myScore != null && g.oppScore != null;
+      var score = hasScore ? g.myScore + ' - ' + g.oppScore : 'LIVE';
+      var period = g.inning || 'LIVE';
+      return '<div class="srow">'
+        + '<span style="width:40px;color:#ffffff;">' + esc(team.abbr) + '</span>'
+        + '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ffd700;animation:blink 1.2s infinite;flex-shrink:0;margin-right:6px;"></span>'
+        + '<span style="color:#ffd700;flex:1;">' + (g.home ? 'VS ' : '@ ') + oppName + '</span>'
+        + '<span style="color:#ffd700;font-size:13px;margin-right:8px;">' + esc(period) + '</span>'
+        + '<span style="color:#ffffff;font-size:16px;">' + esc(score) + '</span>'
+        + '</div>';
+    }
+
+    // Game today (not yet started)
+    if (gd.todayGame) {
+      var tg = gd.todayGame;
+      var topp = getTeam(tg.oppId);
+      var toppName = topp.abbr !== '???' ? topp.abbr : esc(tg.opponent).slice(0, 9);
+      return '<div class="srow">'
+        + '<span style="width:40px;color:#ffffff;">' + esc(team.abbr) + '</span>'
+        + '<span style="color:#a8c898;flex:1;">' + (tg.home ? 'VS ' : '@ ') + toppName + '</span>'
+        + '<span style="color:#ddd8c0;font-size:15px;">' + esc(fmtTime(tg.dateMs)) + '</span>'
+        + '</div>';
+    }
+
+    // Off today, show next game
+    if (gd.next) {
+      var ng = gd.next;
+      var nopp = getTeam(ng.oppId);
+      var noppName = nopp.abbr !== '???' ? nopp.abbr : esc(ng.opponent).slice(0, 9);
+      return '<div class="srow">'
+        + '<span style="width:40px;color:#ffffff;">' + esc(team.abbr) + '</span>'
+        + '<span style="color:#2e4e2e;font-size:14px;width:36px;flex-shrink:0;">OFF</span>'
+        + '<span style="color:#4a6e4a;font-size:14px;flex:1;">' + esc(fmtDate(ng.dateMs)) + ' ' + (ng.home ? 'VS ' : '@ ') + noppName + '</span>'
+        + '</div>';
+    }
+
+    return '<div class="srow"><span style="width:40px;color:#ffffff;">' + esc(team.abbr) + '</span>'
+      + '<span style="color:#2e4e2e;font-size:14px;">OFF</span></div>';
+  }).join('');
+
+  return hdr + rows;
+}
+
+// ── LAST 5 SECTION ────────────────────────────────────────────────────────────
+function html_sec_last5() {
+  var hdr = secHeader('LAST 5');
+  var rows = S.teamIds.map(function(id) {
+    var team   = getTeam(id);
+    var gd     = S.games[id];
+    var recent = (gd && gd.recent) || [];
+    var boxes  = '';
+    for (var i = 0; i < 5; i++) {
+      var g = recent[i];
+      if (!g) {
+        boxes += '<span style="min-width:52px;color:#243424;font-size:16px;">-</span>';
+      } else {
+        var color = g.win ? '#4ade80' : '#f87171';
+        var dimColor = g.win ? '#2a5e3a' : '#6a3030';
+        var letter = g.win ? 'W' : 'L';
+        var hasScore = g.myScore != null && g.oppScore != null;
+        var score = hasScore ? (g.myScore + '-' + g.oppScore) : '';
+        boxes += '<span style="min-width:52px;color:' + color + ';font-size:16px;white-space:nowrap;">'
+               + letter + '<span style="font-size:12px;color:' + dimColor + ';margin-left:3px;">' + score + '</span></span>';
+      }
+    }
+    return '<div class="srow">'
+      + '<span style="width:40px;color:#ffffff;">' + esc(team.abbr) + '</span>'
+      + boxes
+      + '</div>';
+  }).join('');
+
+  return hdr + rows;
+}
+
+function bind_dash() {
+  var rb = document.getElementById('refreshBtn');
+  if (rb) rb.addEventListener('click', function() { if (!S.loading) fetchAll(true); });
+  var eb = document.getElementById('editBtn');
+  if (eb) eb.addEventListener('click', function() {
+    set({ view: 'setup', pending: S.teamIds.slice(), search: '' });
+  });
+}
+
+// ── FETCH ─────────────────────────────────────────────────────────────────────
+async function fetchAll(force) {
+  force = force || false;
+  // bust stale-format cache
+  var cached = Cache.get('stv8');
+  if (!force && cached && !cached.byTeam) { force = true; }
+
+  set({ loading: true, status: 'LOADING...', error: null });
+  try {
+    var standings = S.standings;
+    var sa = Cache.age('stv8');
+    if (force || !standings || sa == null || sa > TTL.standings) {
+      standings = await apiFetchStandings();
+      Cache.set('stv8', standings, TTL.standings);
+    }
+    set({ standings: standings, status: 'FETCHING GAMES...' });
+
+    var ids = S.teamIds;
+    var results = await Promise.all(ids.map(function(id) {
+      return apiFetchSchedule(id)
+        .then(function(data) { return { id: id, data: data }; })
+        .catch(function(e)   { return { id: id, err: e.message }; });
+    }));
+
+    var games = Object.assign({}, S.games);
+    for (var i = 0; i < results.length; i++) {
+      if (!results[i].err) {
+        games[results[i].id] = results[i].data;
+        Cache.set('g' + results[i].id, results[i].data, TTL.games);
+      }
+    }
+    set({ games: games, standings: standings, loading: false, status: '' });
+  } catch(e) {
+    set({ loading: false, status: '', error: e.message });
+  }
+}
+
+window.addEventListener('resize', function() {
+  if (S && S.view === 'dashboard') render();
+});
+
+// ── INIT ──────────────────────────────────────────────────────────────────────
+window.onerror = function(msg, src, line, col) {
+  var el = document.getElementById('app');
+  if (el) el.innerHTML = '<div style="padding:20px;color:#f87171;font-family:Oswald,sans-serif;font-size:13px;word-break:break-all;text-transform:uppercase;"><div style="color:#3d5e3d;margin-bottom:8px;">Error</div>' + msg + '<br>Line ' + line + ':' + col + '</div>';
+};
+try {
+  S = initState();
+  _fetching = false;
+  render();
+} catch(e) {
+  var el = document.getElementById('app');
+  if (el) el.innerHTML = '<div style="padding:20px;color:#f87171;font-family:Oswald,sans-serif;font-size:13px;word-break:break-all;text-transform:uppercase;"><div style="color:#3d5e3d;margin-bottom:8px;">Error</div>' + e.message + '</div>';
+}
+</script>
+</body>
+</html>
