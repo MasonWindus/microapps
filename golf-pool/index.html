@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Golf Pool Tracker</title>
+<style>
+  :root {
+    --bg: #0f1419;
+    --panel: #1a2028;
+    --panel-2: #222b36;
+    --border: #2d3947;
+    --text: #e6edf3;
+    --muted: #8b98a5;
+    --accent: #4ade80;
+    --accent-dim: #22c55e;
+    --danger: #ef4444;
+    --warn: #f59e0b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+  }
+  .container { max-width: 1100px; margin: 0 auto; padding: 24px 20px 60px; }
+  header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
+  h1 { margin: 0; font-size: 24px; color: var(--accent); }
+  .tourney-info { font-size: 14px; color: var(--muted); text-align: right; }
+  .tourney-info strong { color: var(--text); display: block; font-size: 15px; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+    margin-bottom: 18px;
+  }
+  .panel h2 { margin: 0 0 14px; font-size: 16px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
+  button {
+    background: var(--accent);
+    color: #0f1419;
+    border: none;
+    padding: 9px 16px;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 14px;
+  }
+  button:hover { background: var(--accent-dim); }
+  button.ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+  button.ghost:hover { background: var(--panel-2); }
+  button.danger { background: var(--danger); color: white; }
+  input, select {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 14px;
+    width: 100%;
+  }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .form-row { display: grid; gap: 12px; grid-template-columns: 1fr; margin-bottom: 12px; }
+  .pick-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); margin-bottom: 14px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { padding: 10px 8px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .rank { font-weight: 700; color: var(--accent); width: 30px; }
+  .player-row { cursor: pointer; }
+  .player-row:hover { background: var(--panel-2); }
+  .player-detail { background: var(--panel-2); font-size: 13px; }
+  .player-detail td { padding: 12px 16px; }
+  .golfer-line { display: flex; justify-content: space-between; padding: 4px 0; }
+  .golfer-line .name { color: var(--text); }
+  .golfer-line .stats { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .golfer-line.out .name { color: var(--warn); }
+  .empty { text-align: center; color: var(--muted); padding: 30px 20px; }
+  .loading { text-align: center; color: var(--muted); padding: 20px; }
+  .error { color: var(--danger); padding: 12px; background: rgba(239,68,68,0.1); border-radius: 6px; font-size: 13px; }
+  .status-badge { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 600; margin-left: 6px; }
+  .status-cut { background: var(--warn); color: #0f1419; }
+  .status-wd { background: var(--danger); color: white; }
+  .small { font-size: 12px; color: var(--muted); }
+  .remove-btn { background: transparent; color: var(--muted); border: none; padding: 4px 8px; font-size: 18px; cursor: pointer; }
+  .remove-btn:hover { color: var(--danger); background: transparent; }
+  @media (max-width: 600px) {
+    th:nth-child(4), td:nth-child(4) { display: none; }
+    .tourney-info { text-align: left; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>⛳ Golf Pool Tracker</h1>
+    <div class="tourney-info" id="tourneyInfo">Loading tournament…</div>
+  </header>
+
+  <div id="error" class="error" style="display:none"></div>
+
+  <div class="panel">
+    <h2>Add a Player</h2>
+    <div class="form-row">
+      <div>
+        <label>Player name</label>
+        <input type="text" id="playerName" placeholder="e.g. Mason" />
+      </div>
+    </div>
+    <label>Pick 5 golfers (duplicates allowed)</label>
+    <div class="pick-grid" id="pickGrid"></div>
+    <div class="actions">
+      <button id="addBtn">Add Player</button>
+      <button class="ghost" id="refreshBtn">↻ Refresh Scores</button>
+    </div>
+    <div style="margin-top:14px; padding-top:14px; border-top:1px solid var(--border);">
+      <label>Tournament ID override (optional)</label>
+      <div style="display:flex; gap:8px;">
+        <input type="text" id="tourneyIdInput" placeholder="e.g. 401811941 for the 2026 Masters" />
+        <button class="ghost" id="saveIdBtn" style="white-space:nowrap;">Save &amp; Refresh</button>
+      </div>
+      <div class="small" style="margin-top:6px;">
+        Find it in the ESPN leaderboard URL: <code style="color:var(--text);">tournamentId=...</code>. Leave blank to auto-detect.
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Standings</h2>
+    <div id="standings"><div class="loading">Waiting for picks…</div></div>
+  </div>
+
+  <div class="panel">
+    <h2>Scoring Rules</h2>
+    <div class="small">
+      Each player picks 5 golfers (duplicates OK). Standings show avg stroke score and avg position across each player's 5 golfers.
+      Missed cuts and withdrawals: the golfer gets the <em>highest round score posted by any golfer that round</em>, and for position they get <em>the worst surviving position + 1</em>.
+      Picks are saved in your browser.
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- STATE ----------
+let leaderboard = null; // parsed tournament data
+let players = [];       // [{id, name, picks: [athleteId, ...]}]
+
+// ---------- PERSISTENCE ----------
+async function loadPlayers() {
+  try {
+    const r = await window.storage.get('players');
+    players = r ? JSON.parse(r.value) : [];
+  } catch { players = []; }
+}
+async function savePlayers() {
+  try { await window.storage.set('players', JSON.stringify(players)); } catch (e) { console.error(e); }
+}
+
+// ---------- FETCH ESPN ----------
+async function fetchLeaderboard() {
+  const base = 'https://site.api.espn.com/apis/site/v2/sports/golf/pga/leaderboard';
+  // Between tournaments ESPN's default leaderboard endpoint returns 404 because
+  // no event is "in progress". Strategy: try manual override first, then date-pinned,
+  // then the bare endpoint as last resort.
+  const today = new Date();
+  const day = today.getDay(); // 0=Sun
+  const thu = new Date(today);
+  const offsetToThu = day === 0 ? -3 : 4 - day;
+  thu.setDate(today.getDate() + offsetToThu);
+  const yyyymmdd = thu.getFullYear().toString() +
+    String(thu.getMonth() + 1).padStart(2, '0') +
+    String(thu.getDate()).padStart(2, '0');
+
+  const manualId = (document.getElementById('tourneyIdInput')?.value || '').trim();
+  const urls = [];
+  if (manualId) {
+    // Try multiple param names since ESPN isn't consistent across sports
+    urls.push(`${base}?event=${encodeURIComponent(manualId)}`);
+    urls.push(`${base}?eventId=${encodeURIComponent(manualId)}`);
+    urls.push(`${base}?tournamentId=${encodeURIComponent(manualId)}`);
+  }
+  urls.push(`${base}?dates=${yyyymmdd}`);
+  urls.push(base);
+
+  let lastErr = null;
+  for (const url of urls) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) { lastErr = new Error(`HTTP ${res.status}`); continue; }
+      const data = await res.json();
+      const event = data.events && data.events[0];
+      if (!event) { lastErr = new Error('No tournament in response'); continue; }
+      const parsed = parseEvent(event);
+      if (parsed && parsed.competitors.length) return parsed;
+      lastErr = new Error('Tournament found but no competitors');
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('Unknown fetch failure');
+}
+
+function parseEvent(event) {
+  const comp = event.competitions && event.competitions[0];
+  if (!comp) return null;
+
+  const competitors = (comp.competitors || []).map(c => {
+    const statusName = (c.status && c.status.type && c.status.type.name) || '';
+    const isCut = /cut/i.test(statusName);
+    const isWd = /wd|withdraw/i.test(statusName);
+    const posDisp = c.status && c.status.position && (c.status.position.displayName || c.status.position.id);
+    const posNum = posNumeric(posDisp);
+    const rounds = {};
+    (c.linescores || []).forEach(ls => {
+      const period = ls.period || ls.currentPeriod;
+      const val = ls.value != null ? ls.value : (ls.displayValue ? parseInt(ls.displayValue, 10) : null);
+      if (period && Number.isFinite(val) && val > 0) rounds[period] = val;
+    });
+    return {
+      id: String(c.id || (c.athlete && c.athlete.id)),
+      name: (c.athlete && c.athlete.displayName) || 'Unknown',
+      rounds,
+      positionDisplay: posDisp || '-',
+      positionNum: posNum,
+      isCut, isWd,
+      isOut: isCut || isWd
+    };
+  });
+
+  return {
+    name: event.name || event.shortName || 'Tournament',
+    status: (comp.status && comp.status.type && comp.status.type.description) || '',
+    currentRound: (comp.status && comp.status.period) || 1,
+    competitors
+  };
+}
+
+function posNumeric(disp) {
+  if (!disp) return null;
+  const m = String(disp).match(/\d+/);
+  return m ? parseInt(m[0], 10) : null;
+}
+
+// ---------- SCORING LOGIC ----------
+function computeStandings() {
+  if (!leaderboard) return [];
+  const comps = leaderboard.competitors;
+  const roundsPlayed = leaderboard.currentRound;
+
+  // Max score posted in each round (among golfers who posted one)
+  const maxByRound = {};
+  for (let r = 1; r <= 4; r++) {
+    const scores = comps.map(c => c.rounds[r]).filter(v => Number.isFinite(v));
+    if (scores.length) maxByRound[r] = Math.max(...scores);
+  }
+
+  // Worst surviving position + 1
+  const survivingPositions = comps.filter(c => !c.isOut).map(c => c.positionNum).filter(n => Number.isFinite(n));
+  const worstSurviving = survivingPositions.length ? Math.max(...survivingPositions) : comps.length;
+  const mcPosition = worstSurviving + 1;
+
+  return players.map(p => {
+    let totalScore = 0, scoreCount = 0;
+    let totalPos = 0, posCount = 0;
+    const golferDetails = [];
+    for (const pick of p.picks) {
+      // Find golfer by name (case-insensitive), or treat as WD if not in field
+      const key = String(pick).trim().toLowerCase();
+      const g = comps.find(c => c.name.toLowerCase() === key);
+      const notInField = !g;
+      const isOut = notInField || (g && g.isOut);
+
+      // Sum stroke total with MC/WD/not-in-field substitution
+      let golferTotal = 0;
+      for (let r = 1; r <= roundsPlayed; r++) {
+        if (g && Number.isFinite(g.rounds[r])) {
+          golferTotal += g.rounds[r];
+        } else if (isOut && Number.isFinite(maxByRound[r])) {
+          golferTotal += maxByRound[r];
+        }
+      }
+      totalScore += golferTotal;
+      scoreCount += 1;
+
+      const effectivePos = isOut ? mcPosition : (g.positionNum != null ? g.positionNum : mcPosition);
+      totalPos += effectivePos;
+      posCount += 1;
+
+      let status = '';
+      let posDisp;
+      if (notInField) {
+        status = 'WD';
+        posDisp = `Not in field (${mcPosition})`;
+      } else if (g.isCut) {
+        status = 'CUT';
+        posDisp = `MC (${mcPosition})`;
+      } else if (g.isWd) {
+        status = 'WD';
+        posDisp = `WD (${mcPosition})`;
+      } else {
+        posDisp = g.positionDisplay;
+      }
+
+      golferDetails.push({
+        name: notInField ? pick : g.name,
+        out: isOut,
+        status,
+        posDisp,
+        total: golferTotal
+      });
+    }
+    return {
+      id: p.id,
+      name: p.name,
+      picks: p.picks,
+      avgScore: scoreCount ? totalScore / scoreCount : null,
+      avgPos: posCount ? totalPos / posCount : null,
+      golferDetails
+    };
+  }).sort((a, b) => {
+    if (a.avgScore == null) return 1;
+    if (b.avgScore == null) return -1;
+    return a.avgScore - b.avgScore;
+  });
+}
+
+// ---------- RENDER ----------
+function renderPickGrid() {
+  const grid = document.getElementById('pickGrid');
+  const opts = leaderboard
+    ? leaderboard.competitors.map(c => `<option value="${escapeHtml(c.name)}"></option>`).join('')
+    : '';
+  grid.innerHTML = `<datalist id="golferList">${opts}</datalist>` +
+    Array.from({ length: 5 }, (_, i) => `
+      <input type="text" list="golferList" data-pick-slot="${i}" placeholder="Pick ${i + 1}…" autocomplete="off" />
+    `).join('');
+}
+
+function renderTourneyInfo() {
+  const el = document.getElementById('tourneyInfo');
+  if (!leaderboard) { el.textContent = 'No tournament loaded'; return; }
+  el.innerHTML = `<strong>${escapeHtml(leaderboard.name)}</strong>${escapeHtml(leaderboard.status)} · Round ${leaderboard.currentRound}`;
+}
+
+function renderStandings() {
+  const container = document.getElementById('standings');
+  if (!players.length) {
+    container.innerHTML = '<div class="empty">No players yet. Add one above.</div>';
+    return;
+  }
+  if (!leaderboard) {
+    container.innerHTML = '<div class="loading">Loading scores…</div>';
+    return;
+  }
+  const rows = computeStandings();
+  let html = `<table>
+    <thead><tr>
+      <th>#</th><th>Player</th><th class="num">Avg Score</th><th class="num">Avg Pos</th><th></th>
+    </tr></thead><tbody>`;
+  rows.forEach((r, i) => {
+    html += `<tr class="player-row" data-expand="${r.id}">
+      <td class="rank">${i + 1}</td>
+      <td>${escapeHtml(r.name)}</td>
+      <td class="num">${r.avgScore != null ? r.avgScore.toFixed(1) : '-'}</td>
+      <td class="num">${r.avgPos != null ? r.avgPos.toFixed(1) : '-'}</td>
+      <td><button class="remove-btn" data-remove="${r.id}" title="Remove">×</button></td>
+    </tr>
+    <tr class="player-detail" id="detail-${r.id}" style="display:none"><td colspan="5">
+      ${r.golferDetails.map(g => `
+        <div class="golfer-line ${g.out ? 'out' : ''}">
+          <span class="name">${escapeHtml(g.name)}${g.status ? `<span class="status-badge status-${g.status.toLowerCase()}">${g.status}</span>` : ''}</span>
+          <span class="stats">Pos ${escapeHtml(String(g.posDisp))} · Total ${g.total != null ? g.total : '-'}</span>
+        </div>
+      `).join('')}
+    </td></tr>`;
+  });
+  html += '</tbody></table>';
+  container.innerHTML = html;
+
+  container.querySelectorAll('[data-expand]').forEach(row => {
+    row.addEventListener('click', e => {
+      if (e.target.closest('[data-remove]')) return;
+      const id = row.getAttribute('data-expand');
+      const d = document.getElementById('detail-' + id);
+      d.style.display = d.style.display === 'none' ? 'table-row' : 'none';
+    });
+  });
+  container.querySelectorAll('[data-remove]').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      e.stopPropagation();
+      const id = btn.getAttribute('data-remove');
+      players = players.filter(p => p.id !== id);
+      await savePlayers();
+      renderStandings();
+    });
+  });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+}
+
+function showError(msg) {
+  const el = document.getElementById('error');
+  if (!msg) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.textContent = msg;
+}
+
+// ---------- ACTIONS ----------
+async function handleAddPlayer() {
+  const name = document.getElementById('playerName').value.trim();
+  if (!name) { alert('Enter a player name'); return; }
+  const picks = Array.from(document.querySelectorAll('[data-pick-slot]')).map(s => s.value.trim()).filter(Boolean);
+  if (picks.length !== 5) { alert('Pick exactly 5 golfers'); return; }
+  players.push({ id: 'p_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), name, picks });
+  await savePlayers();
+  document.getElementById('playerName').value = '';
+  document.querySelectorAll('[data-pick-slot]').forEach(s => s.value = '');
+  renderStandings();
+}
+
+async function refreshScores() {
+  showError('');
+  try {
+    leaderboard = await fetchLeaderboard();
+    renderTourneyInfo();
+    renderPickGrid();
+    renderStandings();
+  } catch (e) {
+    showError(
+      "Couldn't load the leaderboard. ESPN's default endpoint only returns events that are " +
+      "actively in progress — between tournaments it just 404s. Try pasting a tournament ID " +
+      "in the override field below (e.g. 401811941 for the 2026 Masters). " +
+      "(" + e.message + ")"
+    );
+  }
+}
+
+// ---------- INIT ----------
+(async function init() {
+  document.getElementById('addBtn').addEventListener('click', handleAddPlayer);
+  document.getElementById('refreshBtn').addEventListener('click', refreshScores);
+  document.getElementById('saveIdBtn').addEventListener('click', async () => {
+    const id = document.getElementById('tourneyIdInput').value.trim();
+    try {
+      if (id) await window.storage.set('tourneyId', id);
+      else await window.storage.delete('tourneyId');
+    } catch (e) { console.error(e); }
+    await refreshScores();
+  });
+  // Restore saved tournament ID
+  try {
+    const r = await window.storage.get('tourneyId');
+    if (r && r.value) document.getElementById('tourneyIdInput').value = r.value;
+  } catch {}
+  await loadPlayers();
+  await refreshScores();
+})();
+</script>
+</body>
+</html>
