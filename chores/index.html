@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The Chore Stack</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #f7f4ef; font-family: Georgia, serif; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+
+    const SCHEDULE = {
+      Monday:    { zone: "Bathrooms",          time: "15–20 min", items: ["Quick wipe: sink, counter, toilet","Replace towels if needed","Restock TP / soap"] },
+      Tuesday:   { zone: "Floors",             time: "15–20 min", items: ["Vacuum / sweep main living areas","Spot mop if needed"] },
+      Wednesday: { zone: "Flex / Catch-up",    time: "15–20 min", items: ["Whatever slipped this week","Or take the night off if you're ahead"] },
+      Thursday:  { zone: "Laundry",            time: "15–20 min", items: ["Fold everything in the dryer","Put away all clean laundry","Start a new load if needed"] },
+      Friday:    { zone: "Off",                time: null,         items: ["You're done for the week. Rest."] },
+      Saturday:  { zone: "Deep Clean (rotating)", time: "90 min max — then stop", items: ["See rotation below","Groceries"] },
+      Sunday:    { zone: "Basket Audit",       time: "5 min",      items: ["Process the staging basket","Put mystery items in their homes or toss","Reset for the week"] },
+    };
+
+    const ANCHOR = [
+      "Load dishwasher — nothing sits in the sink",
+      "Add non-dishwasher items to soak basin",
+      "Sweep staging basket across all counters / surfaces",
+      "Wipe counters (skip FIL zone — always)",
+      "5-min common area pickup",
+    ];
+
+    const ROTATION = [
+      { week: "Week 1", zone: "Kitchen deep clean" },
+      { week: "Week 2", zone: "Bathrooms deep clean" },
+      { week: "Week 3", zone: "Bedrooms & living areas" },
+      { week: "Week 4", zone: "Flex — outdoor, garage, whatever needs it" },
+    ];
+
+    const RULES = [
+      "Dishwasher-safe items go straight in. No exceptions.",
+      "Everything else goes into the soak basin immediately.",
+      "Counter clearing and counter wiping are two separate tasks.",
+      "Unknown items go in the staging basket — never let them block you.",
+      "FIL zone: clean around it, never touch it.",
+      "Saturday is for depth, not breadth. Stop at 90 minutes.",
+      '"Good enough" is the goal. Perfect is the enemy of consistent.',
+    ];
+
+    const todayName = new Date().toLocaleDateString("en-US", { weekday: "long" });
+    const todayKey  = new Date().toISOString().split("T")[0]; // e.g. "2025-04-02"
+
+    function loadChecked() {
+      try {
+        const raw = localStorage.getItem("chore-checked");
+        return raw ? JSON.parse(raw) : {};
+      } catch { return {}; }
+    }
+
+    function saveChecked(data) {
+      try { localStorage.setItem("chore-checked", JSON.stringify(data)); } catch {}
+    }
+
+    // Clears entries older than 7 days to keep storage tidy
+    function pruneOld(data) {
+      const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      const pruned = {};
+      for (const key of Object.keys(data)) {
+        const datePart = key.split("|")[0];
+        if (datePart && new Date(datePart).getTime() >= cutoff) {
+          pruned[key] = data[key];
+        } else if (!datePart.match(/^\d{4}-\d{2}-\d{2}$/)) {
+          pruned[key] = data[key];
+        }
+      }
+      return pruned;
+    }
+
+    function App() {
+      const [activeDay, setActiveDay] = useState(DAYS.includes(todayName) ? todayName : "Monday");
+      const [checked, setChecked]     = useState(() => pruneOld(loadChecked()));
+
+      useEffect(() => { saveChecked(checked); }, [checked]);
+
+      const toggle = (key) => setChecked(prev => ({ ...prev, [key]: !prev[key] }));
+
+      // Keys include today's date so history is preserved per-day
+      const dayKey = (suffix) => `${todayKey}|${suffix}`;
+
+      const day    = SCHEDULE[activeDay];
+      const isOff  = activeDay === "Friday";
+      const isNeutral = isOff || activeDay === "Sunday";
+
+      return (
+        <div style={{ fontFamily:"Georgia,serif", background:"#f7f4ef", minHeight:"100vh", padding:"24px 16px", maxWidth:480, margin:"0 auto", color:"#2a2118" }}>
+
+          <div style={{ marginBottom:28 }}>
+            <div style={{ fontSize:11, letterSpacing:"0.15em", textTransform:"uppercase", color:"#9a8c7e", marginBottom:4 }}>Household System</div>
+            <h1 style={{ fontSize:26, fontWeight:"bold", margin:0, lineHeight:1.2 }}>The Chore Stack</h1>
+            <div style={{ fontSize:13, color:"#9a8c7e", marginTop:4 }}>Maintenance mode — not disaster recovery</div>
+          </div>
+
+          <Section title="Every Night — 10–15 min" accent="#c8a96e">
+            <div style={{ fontSize:12, color:"#9a8c7e", marginBottom:10, fontStyle:"italic" }}>Non-negotiable. The whole system rests on this.</div>
+            {ANCHOR.map((item, i) => {
+              const k = dayKey(`anchor-${i}`);
+              return <CheckRow key={k} label={item} checked={!!checked[k]} onToggle={() => toggle(k)} />;
+            })}
+          </Section>
+
+          <div style={{ marginBottom:16 }}>
+            <div style={{ fontSize:11, letterSpacing:"0.12em", textTransform:"uppercase", color:"#9a8c7e", marginBottom:10 }}>Weekly Zone Focus</div>
+            <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+              {DAYS.map(d => (
+                <button key={d} onClick={() => setActiveDay(d)} style={{
+                  padding:"6px 12px", borderRadius:20, border:"1.5px solid",
+                  borderColor: activeDay===d ? "#c8a96e" : "#d9d0c4",
+                  background:  activeDay===d ? "#c8a96e" : "transparent",
+                  color:       activeDay===d ? "#fff"    : "#6b5d50",
+                  fontSize:12, fontFamily:"inherit", cursor:"pointer",
+                  fontWeight:  activeDay===d ? "bold"   : "normal",
+                }}>
+                  {d.slice(0,3)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <Section title={activeDay} accent={isOff ? "#a8c4a0" : "#8fb3c8"}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:10 }}>
+              <span style={{ fontSize:16, fontWeight:"bold" }}>{day.zone}</span>
+              {day.time && <span style={{ fontSize:11, color:"#9a8c7e", fontStyle:"italic" }}>{day.time}</span>}
+            </div>
+            {day.items.map((item, i) => {
+              const k = dayKey(`${activeDay}-${i}`);
+              return isNeutral
+                ? <div key={i} style={{ fontSize:14, color:"#6b5d50", padding:"8px 0", borderBottom:"1px solid #ebe4da" }}>{item}</div>
+                : <CheckRow key={k} label={item} checked={!!checked[k]} onToggle={() => toggle(k)} />;
+            })}
+          </Section>
+
+          {activeDay === "Saturday" && (
+            <Section title="Deep Clean Rotation" accent="#b8a0c8">
+              {ROTATION.map((r, i) => (
+                <div key={i} style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:"1px solid #ebe4da", fontSize:14 }}>
+                  <span style={{ color:"#9a8c7e", fontSize:12 }}>{r.week}</span>
+                  <span>{r.zone}</span>
+                </div>
+              ))}
+            </Section>
+          )}
+
+          <Section title="The Rules" accent="#c87e7e">
+            {RULES.map((rule, i) => (
+              <div key={i} style={{ padding:"8px 0", borderBottom: i<RULES.length-1 ? "1px solid #ebe4da" : "none", fontSize:13, color:"#4a3c30", lineHeight:1.5 }}>
+                <span style={{ color:"#c87e7e", marginRight:8, fontWeight:"bold" }}>{i+1}.</span>{rule}
+              </div>
+            ))}
+          </Section>
+
+          <div style={{ textAlign:"center", fontSize:11, color:"#c0b4a8", marginTop:24, fontStyle:"italic" }}>
+            Consistent beats perfect. Every time.
+          </div>
+        </div>
+      );
+    }
+
+    function Section({ title, children, accent }) {
+      return (
+        <div style={{ marginBottom:20 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
+            <div style={{ width:3, height:16, borderRadius:2, background:accent, flexShrink:0 }} />
+            <div style={{ fontSize:11, letterSpacing:"0.12em", textTransform:"uppercase", color:"#6b5d50", fontWeight:"bold" }}>{title}</div>
+          </div>
+          <div style={{ background:"#fff", borderRadius:12, padding:"4px 14px", boxShadow:"0 1px 4px rgba(0,0,0,0.06)" }}>
+            {children}
+          </div>
+        </div>
+      );
+    }
+
+    function CheckRow({ label, checked, onToggle }) {
+      return (
+        <div onClick={onToggle} style={{ display:"flex", alignItems:"flex-start", gap:12, padding:"10px 0", borderBottom:"1px solid #f0e8de", cursor:"pointer", userSelect:"none" }}>
+          <div style={{ width:18, height:18, borderRadius:4, border:"1.5px solid", borderColor: checked ? "#c8a96e" : "#c0b0a0", background: checked ? "#c8a96e" : "transparent", flexShrink:0, marginTop:1, display:"flex", alignItems:"center", justifyContent:"center" }}>
+            {checked && <span style={{ color:"#fff", fontSize:11 }}>✓</span>}
+          </div>
+          <span style={{ fontSize:14, color: checked ? "#b0a090" : "#3a2c20", textDecoration: checked ? "line-through" : "none", lineHeight:1.4 }}>{label}</span>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
