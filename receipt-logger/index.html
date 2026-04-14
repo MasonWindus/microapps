@@ -673,8 +673,15 @@ function App() {
   };
 
   const handleGoogleConnect = () => {
-    if (tokenClientRef.current) tokenClientRef.current.requestAccessToken();
-    else setError('Google client not ready — check your Client ID in settings.');
+    // Lazily init if the GIS script finished loading after our useEffect ran
+    if (!tokenClientRef.current && window.google?.accounts?.oauth2) {
+      initGoogleClient(config.googleClientId);
+    }
+    if (tokenClientRef.current) {
+      tokenClientRef.current.requestAccessToken();
+    } else {
+      setError('Google client not ready — check your Client ID in settings.');
+    }
   };
 
   const handleGoogleDisconnect = () => {
