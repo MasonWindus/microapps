@@ -190,27 +190,30 @@ const DEFAULT_CFG = { anthropicKey:'', googleClientId:'', spreadsheetId:'', shee
 
 /* ─── sheet detection ─── */
 async function detectSheetFormat(config, token) {
-  // Fetch rows 1–2: row 1 for header names, row 2 for data-validation rules
+  // Fetch rows 1–20: row 1 for header names, rows 2+ for data-validation rules.
+  // The API only returns dataValidation for cells that exist in the grid, so we
+  // scan multiple rows to find the first one carrying a validation rule.
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}`
     + `?includeGridData=true`
-    + `&ranges=${encodeURIComponent(config.sheetName + '!1:2')}`
+    + `&ranges=${encodeURIComponent(config.sheetName + '!1:20')}`
     + `&fields=sheets(data(rowData(values(formattedValue,dataValidation))))`;
 
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
   if (!res.ok) return null;
   const data = await res.json();
 
-  const rows       = data.sheets?.[0]?.data?.[0]?.rowData || [];
+  const rows        = data.sheets?.[0]?.data?.[0]?.rowData || [];
   const headerCells = rows[0]?.values || [];
-  const dataCells   = rows[1]?.values || [];
+  const dataRows    = rows.slice(1); // rows 2–20
 
-  // Map each header to a known field
+  // Map each header to a known field.
+  // "Description" in a budget sheet = the merchant/payee, so it belongs under store.
   const ALIASES = {
     date:     ['date', 'day', 'when', 'transaction date', 'purchase date'],
-    store:    ['store', 'merchant', 'vendor', 'shop', 'retailer', 'payee', 'where'],
+    store:    ['store', 'merchant', 'vendor', 'shop', 'retailer', 'payee', 'where', 'description', 'name'],
     category: ['category', 'cat', 'type', 'kind', 'label', 'tag'],
     total:    ['total', 'amount', 'cost', 'price', 'sum', 'charge', 'spend'],
-    notes:    ['notes', 'note', 'memo', 'comment', 'detail', 'description'],
+    notes:    ['notes', 'note', 'memo', 'comment', 'detail'],
   };
   const columnMap = {};
   headerCells.forEach((cell, i) => {
@@ -222,26 +225,30 @@ async function detectSheetFormat(config, token) {
     }
   });
 
-  // Pull category options from the data-validation rule on that column
+  // Pull category options by scanning rows 2–20 for the first cell in the
+  // category column that carries a data-validation rule.
   let categories = null;
   const catIdx = columnMap.category;
   if (catIdx != null) {
-    // Row 2 is more likely to carry the rule; fall back to row 1
-    const cond = (dataCells[catIdx] || headerCells[catIdx])?.dataValidation?.condition;
-    if (cond?.type === 'ONE_OF_LIST') {
-      categories = cond.values.map(v => v.userEnteredValue).filter(Boolean);
-    } else if (cond?.type === 'ONE_OF_RANGE') {
-      // e.g. =Categories!$A$1:$A$20  →  Categories!A1:A20
-      const rangeRef = (cond.values?.[0]?.userEnteredValue || '')
-        .replace(/^=/, '').replace(/\$/g, '');
-      if (rangeRef) {
-        try {
-          const rv = await fetch(
-            `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(rangeRef)}`,
-            { headers: { Authorization: `Bearer ${token}` } }
-          );
-          if (rv.ok) categories = ((await rv.json()).values || []).flat().filter(Boolean);
-        } catch {}
+    for (const row of dataRows) {
+      const cond = row.values?.[catIdx]?.dataValidation?.condition;
+      if (!cond) continue;
+      if (cond.type === 'ONE_OF_LIST') {
+        categories = cond.values.map(v => v.userEnteredValue).filter(Boolean);
+        break;
+      } else if (cond.type === 'ONE_OF_RANGE') {
+        const rangeRef = (cond.values?.[0]?.userEnteredValue || '')
+          .replace(/^=/, '').replace(/\$/g, '');
+        if (rangeRef) {
+          try {
+            const rv = await fetch(
+              `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(rangeRef)}`,
+              { headers: { Authorization: `Bearer ${token}` } }
+            );
+            if (rv.ok) categories = ((await rv.json()).values || []).flat().filter(Boolean);
+          } catch {}
+        }
+        break;
       }
     }
   }
