@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>Receipt Logger</title>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #f9fafb;
+      --surface: #ffffff;
+      --border: #e5e7eb;
+      --text: #111827;
+      --muted: #6b7280;
+      --primary: #059669;
+      --primary-dark: #047857;
+      --primary-light: #d1fae5;
+      --warn-bg: #fffbeb;
+      --warn: #d97706;
+      --err-bg: #fef2f2;
+      --err: #dc2626;
+      --r: 12px;
+      --rs: 8px;
+    }
+
+    html, body { height: 100%; background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 16px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+
+    #root { min-height: 100%; display: flex; flex-direction: column; }
+
+    .screen { flex: 1; display: flex; flex-direction: column;
+      max-width: 480px; margin: 0 auto; width: 100%; }
+
+    /* ── Header ── */
+    .hdr { display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 18px; background: var(--surface); border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; z-index: 10; }
+    .hdr-title { font-size: 17px; font-weight: 600; }
+    .icon-btn { width: 36px; height: 36px; display: flex; align-items: center;
+      justify-content: center; border: none; background: transparent;
+      cursor: pointer; border-radius: var(--rs); font-size: 18px; color: var(--muted); }
+    .icon-btn:hover { background: var(--bg); }
+
+    /* ── Scrollable body ── */
+    .body { flex: 1; padding: 16px 18px; overflow-y: auto; }
+
+    /* ── Card / field ── */
+    .card { background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--r); padding: 16px; margin-bottom: 12px; }
+    .field { margin-bottom: 14px; }
+    .field:last-child { margin-bottom: 0; }
+    .field label { display: block; font-size: 12px; font-weight: 600;
+      color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+    .field input, .field select {
+      width: 100%; padding: 11px 13px; border: 1px solid var(--border);
+      border-radius: var(--rs); font-size: 16px; color: var(--text);
+      background: var(--bg); outline: none; -webkit-appearance: none; appearance: none; }
+    .field input:focus, .field select:focus {
+      border-color: var(--primary); background: var(--surface);
+      box-shadow: 0 0 0 3px rgba(5,150,105,.12); }
+    .field .pw-wrap { position: relative; }
+    .field .pw-wrap input { padding-right: 52px; }
+    .pw-toggle { position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+      background: none; border: none; cursor: pointer; color: var(--muted);
+      font-size: 13px; font-weight: 600; padding: 4px 6px; }
+
+    /* ── Buttons ── */
+    .btn { display: flex; align-items: center; justify-content: center; gap: 7px;
+      width: 100%; padding: 13px 18px; border: none; border-radius: var(--rs);
+      font-size: 15px; font-weight: 600; cursor: pointer; transition: background .12s; }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: var(--primary-dark); }
+    .btn-primary:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-secondary { background: var(--bg); color: var(--text); border: 1px solid var(--border); }
+    .btn-secondary:hover { background: #f3f4f6; }
+    .btn-ghost { background: none; border: none; color: var(--primary);
+      font-size: 14px; font-weight: 600; cursor: pointer; padding: 0; }
+    .btn-row { display: flex; gap: 8px; }
+    .btn-row .btn { flex: 1; }
+
+    /* ── Alerts ── */
+    .alert { padding: 11px 13px; border-radius: var(--rs); font-size: 14px; margin-bottom: 12px;
+      display: flex; align-items: flex-start; gap: 8px; }
+    .alert-err { background: var(--err-bg); color: var(--err); border: 1px solid #fecaca; }
+    .alert-warn { background: var(--warn-bg); color: var(--warn); border: 1px solid #fde68a; }
+    .alert-ok { background: var(--primary-light); color: var(--primary-dark); border: 1px solid #a7f3d0; }
+    .alert .dismiss { margin-left: auto; background: none; border: none;
+      cursor: pointer; color: inherit; font-size: 16px; line-height: 1; padding: 0 2px; }
+
+    /* ── Confidence badge ── */
+    .badge { display: inline-flex; align-items: center; gap: 3px;
+      font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 10px;
+      text-transform: uppercase; letter-spacing: .4px; margin-left: 6px; vertical-align: middle; }
+    .badge-hi  { background: var(--primary-light); color: var(--primary-dark); }
+    .badge-mid { background: var(--warn-bg); color: var(--warn); }
+    .badge-lo  { background: var(--err-bg); color: var(--err); }
+
+    /* ── Google status row ── */
+    .g-status { display: flex; align-items: center; gap: 9px;
+      padding: 10px 13px; border-radius: var(--rs); background: var(--bg);
+      border: 1px solid var(--border); font-size: 14px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .dot-on { background: #10b981; }
+    .dot-off { background: #ef4444; }
+
+    /* ── Capture screen ── */
+    .capture-body { flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; padding: 40px 18px; gap: 28px; }
+    .cam-btn { width: 116px; height: 116px; border-radius: 50%;
+      background: var(--primary); border: none; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 50px; box-shadow: 0 4px 24px rgba(5,150,105,.38);
+      transition: transform .12s, box-shadow .12s; -webkit-tap-highlight-color: transparent; }
+    .cam-btn:active { transform: scale(.93); box-shadow: 0 2px 10px rgba(5,150,105,.28); }
+    .cam-hint { font-size: 14px; color: var(--muted); text-align: center; }
+    input[type="file"] { display: none; }
+
+    /* ── Processing screen ── */
+    .proc-body { flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 22px; padding: 40px 18px; }
+    .spinner { width: 44px; height: 44px; border: 3px solid var(--border);
+      border-top-color: var(--primary); border-radius: 50%;
+      animation: spin .75s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .thumb { width: 140px; height: 110px; object-fit: cover;
+      border-radius: var(--rs); border: 1px solid var(--border); }
+
+    /* ── Review screen ── */
+    .receipt-img { width: 100%; max-height: 180px; object-fit: cover;
+      border-radius: var(--r); border: 1px solid var(--border); margin-bottom: 14px; }
+    .amount-input { font-size: 26px !important; font-weight: 700 !important;
+      text-align: center !important; color: var(--primary) !important; }
+    .items-list { margin-top: 10px; }
+    .item-row { display: flex; justify-content: space-between;
+      padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+    .item-row:last-child { border-bottom: none; }
+    .item-name { flex: 1; padding-right: 12px; }
+    .item-price { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .split-item { display: flex; align-items: center; gap: 10px;
+      padding: 7px 0; cursor: pointer; font-size: 14px; }
+    .split-item input[type="checkbox"] { width: 18px; height: 18px; flex-shrink: 0; }
+    .split-total { font-size: 14px; font-weight: 600; color: var(--primary); margin-top: 10px; }
+    .toggle-link { font-size: 13px; font-weight: 600; color: var(--primary);
+      background: none; border: none; cursor: pointer; padding: 0; }
+
+    /* ── Bottom action bar ── */
+    .actions { padding: 14px 18px calc(14px + env(safe-area-inset-bottom));
+      background: var(--surface); border-top: 1px solid var(--border);
+      display: flex; flex-direction: column; gap: 8px; }
+
+    /* ── Success screen ── */
+    .success-body { flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 14px;
+      padding: 40px 18px; text-align: center; }
+    .success-icon { width: 76px; height: 76px; border-radius: 50%;
+      background: var(--primary-light); display: flex;
+      align-items: center; justify-content: center; font-size: 38px; }
+    .success-title { font-size: 22px; font-weight: 700; }
+    .success-detail { font-size: 15px; color: var(--muted); line-height: 1.7; }
+    .sheets-link { color: var(--primary); font-size: 14px;
+      text-decoration: none; margin-top: 4px; }
+
+    /* ── Setup guide box ── */
+    .guide { font-size: 13px; color: var(--muted); line-height: 1.75; }
+    .guide strong { color: var(--text); }
+    .sec-label { font-size: 11px; font-weight: 700; color: var(--muted);
+      text-transform: uppercase; letter-spacing: .5px; margin-bottom: 10px; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+/* ─── constants ─── */
+const CATEGORIES = ['Groceries','Dining','Gas','Shopping','Health','Entertainment','Travel','Utilities','Other'];
+const SHEETS_SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
+const MODEL = 'claude-sonnet-4-6';
+
+const DEFAULT_CFG = { anthropicKey:'', googleClientId:'', spreadsheetId:'', sheetName:'Budget Log' };
+
+/* ─── helpers ─── */
+function loadCfg() {
+  try { const s = localStorage.getItem('rl-cfg'); return s ? {...DEFAULT_CFG,...JSON.parse(s)} : {...DEFAULT_CFG}; }
+  catch { return {...DEFAULT_CFG}; }
+}
+function saveCfg(c) { localStorage.setItem('rl-cfg', JSON.stringify(c)); }
+function todayISO() { return new Date().toISOString().slice(0,10); }
+function confLevel(v) { return v >= .8 ? 'hi' : v >= .5 ? 'mid' : 'lo'; }
+function confLabel(v) { return v >= .8 ? 'Confident' : v >= .5 ? 'Unsure' : 'Low confidence'; }
+
+/* Resize image to max 1200×1600 before sending to Claude */
+function resizeImage(dataUrl) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const MAX_W = 1200, MAX_H = 1600;
+      const ratio = Math.min(MAX_W / img.width, MAX_H / img.height, 1);
+      const w = Math.round(img.width * ratio);
+      const h = Math.round(img.height * ratio);
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL('image/jpeg', 0.85));
+    };
+    img.onerror = () => resolve(dataUrl); // fallback: use original
+    img.src = dataUrl;
+  });
+}
+
+/* ─── sub-components ─── */
+function Alert({ type, children, onDismiss }) {
+  return (
+    <div className={`alert alert-${type}`}>
+      <span style={{flex:1}}>{children}</span>
+      {onDismiss && <button className="dismiss" onClick={onDismiss}>×</button>}
+    </div>
+  );
+}
+
+function ConfBadge({ value }) {
+  if (value == null) return null;
+  const lv = confLevel(value);
+  return <span className={`badge badge-${lv}`}>{confLabel(value)}</span>;
+}
+
+/* ══════════════════════════════════
+   SETUP SCREEN
+══════════════════════════════════ */
+function SetupScreen({ config, onSave, googleToken, onGoogleConnect, onGoogleDisconnect, error, onDismissError }) {
+  const [form, setForm] = useState({...config});
+  const [showKey, setShowKey] = useState(false);
+  const set = (k,v) => setForm(f => ({...f,[k]:v}));
+  const ready = form.anthropicKey && form.googleClientId && form.spreadsheetId;
+
+  return (
+    <div className="screen">
+      <div className="hdr">
+        <span className="hdr-title">Settings</span>
+        <button className="btn btn-primary" style={{width:'auto',padding:'7px 14px',fontSize:14}}
+          onClick={() => onSave(form)} disabled={!ready}>
+          Save &amp; Start
+        </button>
+      </div>
+      <div className="body">
+        {error && <Alert type="err" onDismiss={onDismissError}>{error}</Alert>}
+
+        <div className="card">
+          <p className="sec-label">Claude API</p>
+          <div className="field">
+            <label>Anthropic API Key</label>
+            <div className="pw-wrap">
+              <input type={showKey ? 'text' : 'password'} value={form.anthropicKey}
+                onChange={e => set('anthropicKey', e.target.value)} placeholder="sk-ant-..." />
+              <button className="pw-toggle" onClick={() => setShowKey(s => !s)}>
+                {showKey ? 'Hide' : 'Show'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="card">
+          <p className="sec-label">Google Sheets</p>
+          <div className="field">
+            <label>OAuth Client ID</label>
+            <input type="text" value={form.googleClientId}
+              onChange={e => set('googleClientId', e.target.value)}
+              placeholder="123….apps.googleusercontent.com" />
+          </div>
+          <div className="field">
+            <label>Spreadsheet ID</label>
+            <input type="text" value={form.spreadsheetId}
+              onChange={e => set('spreadsheetId', e.target.value)}
+              placeholder="From the URL: /d/SPREADSHEET_ID/edit" />
+          </div>
+          <div className="field">
+            <label>Sheet / Tab Name</label>
+            <input type="text" value={form.sheetName}
+              onChange={e => set('sheetName', e.target.value)}
+              placeholder="Budget Log" />
+          </div>
+          <div className="g-status">
+            <div className={`dot ${googleToken ? 'dot-on' : 'dot-off'}`} />
+            <span style={{flex:1,color:'var(--muted)'}}>
+              {googleToken ? 'Google account connected' : 'Not connected'}
+            </span>
+            <button className="btn-ghost"
+              onClick={googleToken ? onGoogleDisconnect : onGoogleConnect}
+              disabled={!form.googleClientId}>
+              {googleToken ? 'Disconnect' : 'Connect'}
+            </button>
+          </div>
+        </div>
+
+        <div className="card guide">
+          <p style={{fontWeight:700,color:'var(--text)',marginBottom:8}}>Quick setup</p>
+          <p>1. Get an Anthropic API key from <strong>console.anthropic.com</strong></p>
+          <p>2. In Google Cloud Console, create a project and enable the <strong>Google Sheets API</strong></p>
+          <p>3. Under <strong>APIs &amp; Services → Credentials</strong>, create an <strong>OAuth 2.0 Client ID</strong> (Web application)</p>
+          <p>4. Add this page's URL to <strong>Authorized JavaScript origins</strong></p>
+          <p>5. Paste the Spreadsheet ID from your Sheet URL</p>
+          <p style={{marginTop:8}}>Expected columns: <strong>Date · Store · Category · Total · Notes</strong></p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════
+   CAPTURE SCREEN
+══════════════════════════════════ */
+function CaptureScreen({ onImage, onSettings, googleToken, config, error, onDismissError }) {
+  const fileRef = useRef();
+
+  const handleFile = e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    // reset so the same file can be picked again
+    e.target.value = '';
+    const reader = new FileReader();
+    reader.onload = ev => onImage(ev.target.result, file.type || 'image/jpeg');
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <div className="screen">
+      <div className="hdr">
+        <span className="hdr-title">Receipt Logger</span>
+        <button className="icon-btn" onClick={onSettings} title="Settings">⚙️</button>
+      </div>
+      <div className="capture-body">
+        {error && <Alert type="err" onDismiss={onDismissError} style={{width:'100%'}}>{error}</Alert>}
+        <div className="g-status" style={{width:'100%'}}>
+          <div className={`dot ${googleToken ? 'dot-on' : 'dot-off'}`} />
+          <span style={{fontSize:13,color:'var(--muted)'}}>
+            {googleToken
+              ? `Logging to "${config.sheetName}"`
+              : 'Google not connected — tap ⚙️ to connect'}
+          </span>
+        </div>
+
+        <button className="cam-btn" onClick={() => fileRef.current.click()}>📷</button>
+        <p className="cam-hint">Tap to snap a photo<br/>or pick from gallery</p>
+
+        <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handleFile} />
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════
+   PROCESSING SCREEN
+══════════════════════════════════ */
+function ProcessingScreen({ imageData }) {
+  return (
+    <div className="screen">
+      <div className="hdr"><span className="hdr-title">Analyzing…</span></div>
+      <div className="proc-body">
+        {imageData && <img src={imageData} alt="" className="thumb" />}
+        <div className="spinner" />
+        <p style={{color:'var(--muted)',fontSize:14}}>Reading receipt with Claude…</p>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════
+   REVIEW SCREEN
+══════════════════════════════════ */
+function ReviewScreen({ imageData, receipt, onLog, onRetake, onSettings, logging, error, onDismissError }) {
+  const [form, setForm] = useState({
+    date: receipt.date || todayISO(),
+    store: receipt.store || '',
+    category: receipt.category || 'Other',
+    total: receipt.total != null ? String(receipt.total) : '',
+    notes: receipt.notes || '',
+  });
+  const [showItems, setShowItems] = useState(false);
+  const [splitMode, setSplitMode] = useState(false);
+  const [splitItems, setSplitItems] = useState(
+    (receipt.items || []).map(it => ({...it, checked: false}))
+  );
+  const set = (k,v) => setForm(f => ({...f,[k]:v}));
+
+  const conf = receipt.categoryConfidence;
+  const hasItems = receipt.items && receipt.items.length > 0;
+  const selectedTotal = splitMode
+    ? splitItems.filter(i => i.checked).reduce((s,i) => s + (i.price || 0), 0)
+    : null;
+
+  // When split mode is on, drive the total field from checkbox selection
+  useEffect(() => {
+    if (splitMode && selectedTotal != null) {
+      set('total', selectedTotal.toFixed(2));
+    }
+  }, [splitMode, selectedTotal]);
+
+  const handleLog = () => {
+    const totalNum = parseFloat(form.total);
+    if (isNaN(totalNum)) return;
+    onLog({...form, total: totalNum});
+  };
+
+  return (
+    <div className="screen">
+      <div className="hdr">
+        <button className="icon-btn" onClick={onRetake}>←</button>
+        <span className="hdr-title">Confirm Receipt</span>
+        <button className="icon-btn" onClick={onSettings}>⚙️</button>
+      </div>
+      <div className="body">
+        {error && <Alert type="err" onDismiss={onDismissError}>{error}</Alert>}
+        {imageData && <img src={imageData} alt="Receipt" className="receipt-img" />}
+
+        {conf != null && conf < 0.5 && (
+          <Alert type="warn">Low-confidence parse — please review all fields carefully.</Alert>
+        )}
+
+        <div className="card">
+          <div className="field">
+            <label>Total</label>
+            <input type="number" step="0.01" min="0"
+              value={form.total} onChange={e => set('total', e.target.value)}
+              className="amount-input" placeholder="0.00" />
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="field">
+            <label>Date</label>
+            <input type="date" value={form.date} onChange={e => set('date', e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Store</label>
+            <input type="text" value={form.store} onChange={e => set('store', e.target.value)} placeholder="Store name" />
+          </div>
+          <div className="field">
+            <label>
+              Category
+              <ConfBadge value={conf} />
+            </label>
+            <select value={form.category} onChange={e => set('category', e.target.value)}>
+              {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label>Notes (optional)</label>
+            <input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Any notes…" />
+          </div>
+        </div>
+
+        {hasItems && (
+          <div className="card">
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <span style={{fontSize:14,fontWeight:600}}>
+                {receipt.items.length} line items detected
+              </span>
+              <button className="toggle-link" onClick={() => setShowItems(s => !s)}>
+                {showItems ? 'Hide' : 'Show'}
+              </button>
+            </div>
+
+            {showItems && (
+              <>
+                {!splitMode && (
+                  <div className="items-list">
+                    {receipt.items.map((it,i) => (
+                      <div key={i} className="item-row">
+                        <span className="item-name">{it.name}</span>
+                        <span className="item-price">${(it.price||0).toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {splitMode && (
+                  <div style={{marginTop:10}}>
+                    <p style={{fontSize:12,color:'var(--muted)',marginBottom:6}}>
+                      Check items to include — total updates automatically
+                    </p>
+                    {splitItems.map((it,i) => (
+                      <label key={i} className="split-item">
+                        <input type="checkbox" checked={it.checked}
+                          onChange={e => setSplitItems(items =>
+                            items.map((x,j) => j===i ? {...x,checked:e.target.checked} : x)
+                          )} />
+                        <span style={{flex:1}}>{it.name}</span>
+                        <span style={{color:'var(--muted)'}}>${(it.price||0).toFixed(2)}</span>
+                      </label>
+                    ))}
+                    {selectedTotal != null && (
+                      <p className="split-total">Selected total: ${selectedTotal.toFixed(2)}</p>
+                    )}
+                  </div>
+                )}
+
+                <div style={{marginTop:12,display:'flex',gap:8}}>
+                  <button className="btn btn-secondary" style={{flex:1,fontSize:13,padding:'9px'}}
+                    onClick={() => { setSplitMode(s => !s); if (splitMode) set('total', String(receipt.total||'')); }}>
+                    {splitMode ? 'Cancel split' : '✂️ Split this receipt'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="actions">
+        <button className="btn btn-primary" onClick={handleLog}
+          disabled={!form.total || logging}>
+          {logging ? 'Logging…' : '📊 Log to Sheets'}
+        </button>
+        <button className="btn btn-secondary" onClick={onRetake} disabled={logging}>
+          Retake photo
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════
+   MANUAL ENTRY SCREEN
+══════════════════════════════════ */
+function ManualScreen({ parseError, onLog, onBack, logging, error, onDismissError }) {
+  const [form, setForm] = useState({
+    date: todayISO(), store:'', category:'Other', total:'', notes:''
+  });
+  const set = (k,v) => setForm(f => ({...f,[k]:v}));
+
+  return (
+    <div className="screen">
+      <div className="hdr">
+        <button className="icon-btn" onClick={onBack}>←</button>
+        <span className="hdr-title">Manual Entry</span>
+      </div>
+      <div className="body">
+        {parseError && (
+          <Alert type="warn">Couldn't read receipt: {parseError}. Enter details manually.</Alert>
+        )}
+        {error && <Alert type="err" onDismiss={onDismissError}>{error}</Alert>}
+
+        <div className="card">
+          <div className="field">
+            <label>Total</label>
+            <input type="number" step="0.01" min="0"
+              value={form.total} onChange={e => set('total', e.target.value)}
+              className="amount-input" placeholder="0.00" />
+          </div>
+        </div>
+        <div className="card">
+          <div className="field">
+            <label>Date</label>
+            <input type="date" value={form.date} onChange={e => set('date', e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Store</label>
+            <input type="text" value={form.store} onChange={e => set('store', e.target.value)} placeholder="Store name" />
+          </div>
+          <div className="field">
+            <label>Category</label>
+            <select value={form.category} onChange={e => set('category', e.target.value)}>
+              {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label>Notes (optional)</label>
+            <input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Any notes…" />
+          </div>
+        </div>
+      </div>
+      <div className="actions">
+        <button className="btn btn-primary"
+          onClick={() => { const n = parseFloat(form.total); if (!isNaN(n)) onLog({...form,total:n}); }}
+          disabled={!form.store || !form.total || logging}>
+          {logging ? 'Logging…' : '📊 Log to Sheets'}
+        </button>
+        <button className="btn btn-secondary" onClick={onBack} disabled={logging}>Back</button>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════
+   SUCCESS SCREEN
+══════════════════════════════════ */
+function SuccessScreen({ logged, onAnother, config }) {
+  const sheetsUrl = `https://docs.google.com/spreadsheets/d/${config.spreadsheetId}/edit`;
+  return (
+    <div className="screen">
+      <div className="hdr"><span className="hdr-title">Logged!</span></div>
+      <div className="success-body">
+        <div className="success-icon">✅</div>
+        <h2 className="success-title">Receipt Logged</h2>
+        <p className="success-detail">
+          {logged.store && <><strong>{logged.store}</strong><br/></>}
+          <strong>${parseFloat(logged.total).toFixed(2)}</strong> &nbsp;·&nbsp; {logged.category}<br/>
+          {logged.date}
+          {logged.notes && <><br/><span style={{fontStyle:'italic'}}>{logged.notes}</span></>}
+        </p>
+        <button className="btn btn-primary" style={{marginTop:12}} onClick={onAnother}>
+          Log Another
+        </button>
+        {config.spreadsheetId && (
+          <a href={sheetsUrl} target="_blank" rel="noopener noreferrer" className="sheets-link">
+            Open in Google Sheets →
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════
+   ROOT APP
+══════════════════════════════════ */
+function App() {
+  const [config, setConfig]       = useState(loadCfg);
+  const [screen, setScreen]       = useState(() => {
+    const c = loadCfg();
+    return c.anthropicKey && c.googleClientId && c.spreadsheetId ? 'capture' : 'setup';
+  });
+  const [imageData, setImageData] = useState(null);
+  const [receipt, setReceipt]     = useState(null);
+  const [logged, setLogged]       = useState(null);
+  const [logging, setLogging]     = useState(false);
+  const [error, setError]         = useState(null);
+  const [parseError, setParseError] = useState(null);
+  const [googleToken, setGoogleToken] = useState(null);
+  const tokenClientRef = useRef(null);
+
+  /* ── init Google token client when clientId is available ── */
+  const initGoogleClient = useCallback((clientId) => {
+    const build = () => {
+      if (!window.google?.accounts?.oauth2) return false;
+      tokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: SHEETS_SCOPE,
+        callback: resp => {
+          if (resp.error) { setError('Google auth failed: ' + resp.error); return; }
+          setGoogleToken(resp.access_token);
+          // tokens expire in ~1h; clear before then
+          setTimeout(() => setGoogleToken(null), 55 * 60 * 1000);
+        },
+      });
+      return true;
+    };
+    if (!build()) {
+      // GIS script not yet loaded — wait for it
+      const script = document.querySelector('script[src*="gsi/client"]');
+      if (script) script.addEventListener('load', build, {once:true});
+    }
+  }, []);
+
+  useEffect(() => {
+    if (config.googleClientId) initGoogleClient(config.googleClientId);
+  }, [config.googleClientId]);
+
+  /* ── handlers ── */
+  const handleSaveConfig = cfg => {
+    setConfig(cfg); saveCfg(cfg); setGoogleToken(null);
+    initGoogleClient(cfg.googleClientId);
+    setScreen('capture');
+  };
+
+  const handleGoogleConnect = () => {
+    if (tokenClientRef.current) tokenClientRef.current.requestAccessToken();
+    else setError('Google client not ready — check your Client ID in settings.');
+  };
+
+  const handleGoogleDisconnect = () => {
+    if (window.google && googleToken) window.google.accounts.oauth2.revoke(googleToken);
+    setGoogleToken(null);
+  };
+
+  const handleImage = async (dataUrl, mime) => {
+    setParseError(null); setError(null);
+    setScreen('processing');
+    try {
+      const resized = await resizeImage(dataUrl);
+      setImageData(resized);
+      await parseReceipt(resized, mime);
+    } catch(e) {
+      setImageData(dataUrl);
+      await parseReceipt(dataUrl, mime);
+    }
+  };
+
+  const parseReceipt = async (dataUrl, mime) => {
+    try {
+      const base64 = dataUrl.split(',')[1];
+      const safeType = (['image/jpeg','image/png','image/gif','image/webp']
+        .includes(mime) ? mime : 'image/jpeg');
+
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': config.anthropicKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: MODEL,
+          max_tokens: 1024,
+          messages: [{
+            role: 'user',
+            content: [
+              { type:'image', source:{ type:'base64', media_type: safeType, data: base64 } },
+              { type:'text', text:
+`Parse this receipt. Return ONLY a raw JSON object — no markdown, no commentary.
+
+{
+  "date": "YYYY-MM-DD",
+  "store": "store name",
+  "total": 0.00,
+  "category": "Groceries|Dining|Gas|Shopping|Health|Entertainment|Travel|Utilities|Other",
+  "categoryConfidence": 0.9,
+  "items": [{"name":"item name","price":0.00}],
+  "notes": ""
+}
+
+If the image is unreadable or not a receipt, return: {"error":"short description"}
+Today is ${todayISO()}.` },
+            ],
+          }],
+        }),
+      });
+
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.error?.message || `API error ${res.status}`);
+      }
+
+      const data = await res.json();
+      const text = data.content?.[0]?.text || '';
+      const match = text.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error('No JSON in response');
+
+      const parsed = JSON.parse(match[0]);
+      if (parsed.error) { setParseError(parsed.error); setScreen('manual'); return; }
+
+      setReceipt(parsed);
+      setScreen('review');
+    } catch(e) {
+      console.error('Parse error:', e);
+      setParseError(e.message);
+      setScreen('manual');
+    }
+  };
+
+  const handleLog = async formData => {
+    setLogging(true); setError(null);
+    try {
+      if (!googleToken) {
+        // prompt auth then bail — user must tap again after connecting
+        if (tokenClientRef.current) tokenClientRef.current.requestAccessToken();
+        setError('Connect your Google account first, then tap Log again.');
+        setLogging(false); return;
+      }
+
+      const row = [formData.date, formData.store, formData.category,
+                   formData.total, formData.notes || ''];
+      const range = `${config.sheetName}!A:E`;
+      const url = `https://sheets.googleapis.com/v4/spreadsheets/` +
+        `${encodeURIComponent(config.spreadsheetId)}/values/` +
+        `${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Authorization':`Bearer ${googleToken}`, 'Content-Type':'application/json' },
+        body: JSON.stringify({ values: [row] }),
+      });
+
+      if (!resp.ok) {
+        const e = await resp.json().catch(() => ({}));
+        if (resp.status === 401) {
+          setGoogleToken(null);
+          throw new Error('Google token expired — please reconnect in Settings and try again.');
+        }
+        throw new Error(e.error?.message || `Sheets error ${resp.status}`);
+      }
+
+      setLogged(formData);
+      setScreen('success');
+    } catch(e) {
+      setError(e.message);
+    } finally {
+      setLogging(false);
+    }
+  };
+
+  const reset = () => {
+    setImageData(null); setReceipt(null); setLogged(null);
+    setError(null); setParseError(null); setScreen('capture');
+  };
+
+  /* ── render ── */
+  const commonProps = { error, onDismissError: () => setError(null) };
+
+  if (screen === 'setup')
+    return <SetupScreen config={config} onSave={handleSaveConfig}
+      googleToken={googleToken} onGoogleConnect={handleGoogleConnect}
+      onGoogleDisconnect={handleGoogleDisconnect} {...commonProps} />;
+
+  if (screen === 'capture')
+    return <CaptureScreen onImage={handleImage} onSettings={() => setScreen('setup')}
+      googleToken={googleToken} config={config} {...commonProps} />;
+
+  if (screen === 'processing')
+    return <ProcessingScreen imageData={imageData} />;
+
+  if (screen === 'review' && receipt)
+    return <ReviewScreen imageData={imageData} receipt={receipt}
+      onLog={handleLog} onRetake={reset} onSettings={() => setScreen('setup')}
+      logging={logging} {...commonProps} />;
+
+  if (screen === 'manual')
+    return <ManualScreen parseError={parseError} onLog={handleLog}
+      onBack={reset} logging={logging} {...commonProps} />;
+
+  if (screen === 'success' && logged)
+    return <SuccessScreen logged={logged} onAnother={reset} config={config} />;
+
+  return null;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
