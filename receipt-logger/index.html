@@ -188,6 +188,82 @@ const MODEL = 'claude-haiku-4-5';
 
 const DEFAULT_CFG = { anthropicKey:'', googleClientId:'', spreadsheetId:'', sheetName:'Budget Log' };
 
+/* ─── sheet detection ─── */
+async function detectSheetFormat(config, token) {
+  // Fetch rows 1–2: row 1 for header names, row 2 for data-validation rules
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}`
+    + `?includeGridData=true`
+    + `&ranges=${encodeURIComponent(config.sheetName + '!1:2')}`
+    + `&fields=sheets(data(rowData(values(formattedValue,dataValidation))))`;
+
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) return null;
+  const data = await res.json();
+
+  const rows       = data.sheets?.[0]?.data?.[0]?.rowData || [];
+  const headerCells = rows[0]?.values || [];
+  const dataCells   = rows[1]?.values || [];
+
+  // Map each header to a known field
+  const ALIASES = {
+    date:     ['date', 'day', 'when', 'transaction date', 'purchase date'],
+    store:    ['store', 'merchant', 'vendor', 'shop', 'retailer', 'payee', 'where'],
+    category: ['category', 'cat', 'type', 'kind', 'label', 'tag'],
+    total:    ['total', 'amount', 'cost', 'price', 'sum', 'charge', 'spend'],
+    notes:    ['notes', 'note', 'memo', 'comment', 'detail', 'description'],
+  };
+  const columnMap = {};
+  headerCells.forEach((cell, i) => {
+    const h = (cell.formattedValue || '').toLowerCase().trim();
+    if (!h) return;
+    for (const [field, aliases] of Object.entries(ALIASES)) {
+      if (columnMap[field] == null && aliases.some(a => h.includes(a)))
+        columnMap[field] = i;
+    }
+  });
+
+  // Pull category options from the data-validation rule on that column
+  let categories = null;
+  const catIdx = columnMap.category;
+  if (catIdx != null) {
+    // Row 2 is more likely to carry the rule; fall back to row 1
+    const cond = (dataCells[catIdx] || headerCells[catIdx])?.dataValidation?.condition;
+    if (cond?.type === 'ONE_OF_LIST') {
+      categories = cond.values.map(v => v.userEnteredValue).filter(Boolean);
+    } else if (cond?.type === 'ONE_OF_RANGE') {
+      // e.g. =Categories!$A$1:$A$20  →  Categories!A1:A20
+      const rangeRef = (cond.values?.[0]?.userEnteredValue || '')
+        .replace(/^=/, '').replace(/\$/g, '');
+      if (rangeRef) {
+        try {
+          const rv = await fetch(
+            `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(rangeRef)}`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+          if (rv.ok) categories = ((await rv.json()).values || []).flat().filter(Boolean);
+        } catch {}
+      }
+    }
+  }
+
+  return { columnMap, categories };
+}
+
+// Build an append row that respects the detected column order.
+// Falls back to [date, store, category, total, notes] if no map was detected.
+function buildRow(formData, columnMap) {
+  if (!columnMap || Object.keys(columnMap).length === 0)
+    return [formData.date, formData.store, formData.category, formData.total, formData.notes || ''];
+  const maxIdx = Math.max(...Object.values(columnMap));
+  const row = new Array(maxIdx + 1).fill('');
+  if (columnMap.date     != null) row[columnMap.date]     = formData.date;
+  if (columnMap.store    != null) row[columnMap.store]    = formData.store;
+  if (columnMap.category != null) row[columnMap.category] = formData.category;
+  if (columnMap.total    != null) row[columnMap.total]    = formData.total;
+  if (columnMap.notes    != null) row[columnMap.notes]    = formData.notes || '';
+  return row;
+}
+
 /* ─── helpers ─── */
 function loadCfg() {
   try { const s = localStorage.getItem('rl-cfg'); return s ? {...DEFAULT_CFG,...JSON.parse(s)} : {...DEFAULT_CFG}; }
@@ -308,7 +384,7 @@ function SetupScreen({ config, onSave, googleToken, onGoogleConnect, onGoogleDis
           <p>3. Under <strong>APIs &amp; Services → Credentials</strong>, create an <strong>OAuth 2.0 Client ID</strong> (Web application)</p>
           <p>4. Add this page's URL to <strong>Authorized JavaScript origins</strong></p>
           <p>5. Paste the Spreadsheet ID from your Sheet URL</p>
-          <p style={{marginTop:8}}>Expected columns: <strong>Date · Store · Category · Total · Notes</strong></p>
+          <p style={{marginTop:8}}>Column order is auto-detected from your header row. Recognised headers: <strong>Date, Store/Merchant/Vendor, Category/Type, Total/Amount, Notes/Memo</strong></p>
         </div>
       </div>
     </div>
@@ -376,11 +452,15 @@ function ProcessingScreen({ imageData }) {
 /* ══════════════════════════════════
    REVIEW SCREEN
 ══════════════════════════════════ */
-function ReviewScreen({ imageData, receipt, onLog, onRetake, onSettings, logging, error, onDismissError }) {
+function ReviewScreen({ imageData, receipt, onLog, onRetake, onSettings, logging, error, onDismissError, categories }) {
+  const cats = categories || CATEGORIES;
+  // Keep Claude's suggestion even if it's not in the sheet list (user can override)
+  const catOptions = receipt.category && !cats.includes(receipt.category)
+    ? [receipt.category, ...cats] : cats;
   const [form, setForm] = useState({
     date: receipt.date || todayISO(),
     store: receipt.store || '',
-    category: receipt.category || 'Other',
+    category: receipt.category || cats[0] || 'Other',
     total: receipt.total != null ? String(receipt.total) : '',
     notes: receipt.notes || '',
   });
@@ -449,7 +529,7 @@ function ReviewScreen({ imageData, receipt, onLog, onRetake, onSettings, logging
               <ConfBadge value={conf} />
             </label>
             <select value={form.category} onChange={e => set('category', e.target.value)}>
-              {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+              {catOptions.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
           <div className="field">
@@ -531,9 +611,10 @@ function ReviewScreen({ imageData, receipt, onLog, onRetake, onSettings, logging
 /* ══════════════════════════════════
    MANUAL ENTRY SCREEN
 ══════════════════════════════════ */
-function ManualScreen({ parseError, onLog, onBack, logging, error, onDismissError }) {
+function ManualScreen({ parseError, onLog, onBack, logging, error, onDismissError, categories }) {
+  const cats = categories || CATEGORIES;
   const [form, setForm] = useState({
-    date: todayISO(), store:'', category:'Other', total:'', notes:''
+    date: todayISO(), store:'', category: cats[0] || 'Other', total:'', notes:''
   });
   const set = (k,v) => setForm(f => ({...f,[k]:v}));
 
@@ -569,7 +650,7 @@ function ManualScreen({ parseError, onLog, onBack, logging, error, onDismissErro
           <div className="field">
             <label>Category</label>
             <select value={form.category} onChange={e => set('category', e.target.value)}>
-              {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+              {cats.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
           <div className="field">
@@ -636,6 +717,7 @@ function App() {
   const [error, setError]         = useState(null);
   const [parseError, setParseError] = useState(null);
   const [googleToken, setGoogleToken] = useState(null);
+  const [sheetConfig, setSheetConfig] = useState(null); // { columnMap, categories }
   const tokenClientRef = useRef(null);
 
   /* ── init Google token client when clientId is available ── */
@@ -664,6 +746,14 @@ function App() {
   useEffect(() => {
     if (config.googleClientId) initGoogleClient(config.googleClientId);
   }, [config.googleClientId]);
+
+  // Detect column layout + category options whenever we have a token and sheet ID
+  useEffect(() => {
+    if (!googleToken || !config.spreadsheetId) { setSheetConfig(null); return; }
+    detectSheetFormat(config, googleToken)
+      .then(r => setSheetConfig(r))
+      .catch(() => setSheetConfig(null));
+  }, [googleToken, config.spreadsheetId, config.sheetName]);
 
   /* ── handlers ── */
   const handleSaveConfig = cfg => {
@@ -731,7 +821,7 @@ function App() {
   "date": "YYYY-MM-DD",
   "store": "store name",
   "total": 0.00,
-  "category": "Groceries|Dining|Gas|Shopping|Health|Entertainment|Travel|Utilities|Other",
+  "category": "${(sheetConfig?.categories || CATEGORIES).join('|')}",
   "categoryConfidence": 0.9,
   "items": [{"name":"item name","price":0.00}],
   "notes": ""
@@ -776,12 +866,10 @@ Today is ${todayISO()}.` },
         setLogging(false); return;
       }
 
-      const row = [formData.date, formData.store, formData.category,
-                   formData.total, formData.notes || ''];
-      const range = `${config.sheetName}!A:E`;
+      const row = buildRow(formData, sheetConfig?.columnMap);
       const url = `https://sheets.googleapis.com/v4/spreadsheets/` +
         `${encodeURIComponent(config.spreadsheetId)}/values/` +
-        `${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+        `${encodeURIComponent(config.sheetName)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
 
       const resp = await fetch(url, {
         method: 'POST',
@@ -830,11 +918,11 @@ Today is ${todayISO()}.` },
   if (screen === 'review' && receipt)
     return <ReviewScreen imageData={imageData} receipt={receipt}
       onLog={handleLog} onRetake={reset} onSettings={() => setScreen('setup')}
-      logging={logging} {...commonProps} />;
+      logging={logging} categories={sheetConfig?.categories} {...commonProps} />;
 
   if (screen === 'manual')
     return <ManualScreen parseError={parseError} onLog={handleLog}
-      onBack={reset} logging={logging} {...commonProps} />;
+      onBack={reset} logging={logging} categories={sheetConfig?.categories} {...commonProps} />;
 
   if (screen === 'success' && logged)
     return <SuccessScreen logged={logged} onAnother={reset} config={config} />;
