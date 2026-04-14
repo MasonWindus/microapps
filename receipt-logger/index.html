@@ -667,7 +667,8 @@ function App() {
 
   /* ── handlers ── */
   const handleSaveConfig = cfg => {
-    setConfig(cfg); saveCfg(cfg); setGoogleToken(null);
+    if (cfg.googleClientId !== config.googleClientId) setGoogleToken(null);
+    setConfig(cfg); saveCfg(cfg);
     initGoogleClient(cfg.googleClientId);
     setScreen('capture');
   };
