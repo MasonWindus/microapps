@@ -253,7 +253,9 @@ async function detectSheetFormat(config, token) {
     }
   }
 
-  return { columnMap, categories };
+  const headers = headerCells.map(c => c.formattedValue || '');
+  console.log('raw headers:', headers, 'columnMap:', columnMap);
+  return { columnMap, categories, headers };
 }
 
 // Build an append row that respects the detected column order.
@@ -459,7 +461,7 @@ function ProcessingScreen({ imageData }) {
 /* ══════════════════════════════════
    REVIEW SCREEN
 ══════════════════════════════════ */
-function ReviewScreen({ imageData, receipt, onLog, onRetake, onSettings, logging, error, onDismissError, categories, columnMap }) {
+function ReviewScreen({ imageData, receipt, onLog, onRetake, onSettings, logging, error, onDismissError, categories, columnMap, detectedHeaders }) {
   const cats = categories || CATEGORIES;
   // Keep Claude's suggestion even if it's not in the sheet list (user can override)
   const catOptions = receipt.category && !cats.includes(receipt.category)
@@ -605,17 +607,22 @@ function ReviewScreen({ imageData, receipt, onLog, onRetake, onSettings, logging
       {(() => {
         const FIELD_LABELS = { date:'Date', store:'Store', category:'Category', total:'Total', notes:'Notes' };
         const colLetter = i => String.fromCharCode(65 + i);
+        const headerLine = detectedHeaders
+          ? <p style={{marginBottom:3}}>Sheet row 1: {detectedHeaders.map((h,i) => h ? `${colLetter(i)}="${h}"` : null).filter(Boolean).join(', ') || '(empty)'}</p>
+          : null;
         if (columnMap && Object.keys(columnMap).length > 0) {
           const parts = Object.entries(columnMap)
             .sort(([,a],[,b]) => a - b)
-            .map(([f, i]) => `${FIELD_LABELS[f] || f} → ${colLetter(i)}`);
-          return <p style={{fontSize:12,color:'var(--muted)',textAlign:'center',padding:'0 18px 10px'}}>
-            Columns: {parts.join(' · ')}
-          </p>;
+            .map(([f, i]) => `${FIELD_LABELS[f] || f}→${colLetter(i)}`);
+          return <div style={{padding:'0 18px 10px',fontSize:12,color:'var(--muted)',textAlign:'center'}}>
+            {headerLine}
+            <p>Mapped: {parts.join(' · ')}</p>
+          </div>;
         }
-        return <p style={{fontSize:12,color:'var(--warn)',textAlign:'center',padding:'0 18px 10px'}}>
-          ⚠️ No columns detected — using default order
-        </p>;
+        return <div style={{padding:'0 18px 10px',fontSize:12,color:'var(--warn)',textAlign:'center'}}>
+          {headerLine}
+          <p>⚠️ No columns detected — using default order</p>
+        </div>;
       })()}
 
       <div className="actions">
@@ -944,7 +951,7 @@ Today is ${todayISO()}.` },
     return <ReviewScreen imageData={imageData} receipt={receipt}
       onLog={handleLog} onRetake={reset} onSettings={() => setScreen('setup')}
       logging={logging} categories={sheetConfig?.categories}
-      columnMap={sheetConfig?.columnMap} {...commonProps} />;
+      columnMap={sheetConfig?.columnMap} detectedHeaders={sheetConfig?.headers} {...commonProps} />;
 
   if (screen === 'manual')
     return <ManualScreen parseError={parseError} onLog={handleLog}
