@@ -202,11 +202,8 @@ async function detectSheetFormat(config, token) {
   if (!res.ok) return null;
   const data = await res.json();
 
-  const rows        = data.sheets?.[0]?.data?.[0]?.rowData || [];
-  const headerCells = rows[0]?.values || [];
-  const dataRows    = rows.slice(1); // rows 2–20
+  const rows = data.sheets?.[0]?.data?.[0]?.rowData || [];
 
-  // Map each header to a known field.
   // "Description" in a budget sheet = the merchant/payee, so it belongs under store.
   const ALIASES = {
     date:     ['date', 'day', 'when', 'transaction date', 'purchase date'],
@@ -215,15 +212,30 @@ async function detectSheetFormat(config, token) {
     total:    ['total', 'amount', 'cost', 'price', 'sum', 'charge', 'spend'],
     notes:    ['notes', 'note', 'memo', 'comment', 'detail'],
   };
-  const columnMap = {};
-  headerCells.forEach((cell, i) => {
-    const h = (cell.formattedValue || '').toLowerCase().trim();
-    if (!h) return;
-    for (const [field, aliases] of Object.entries(ALIASES)) {
-      if (columnMap[field] == null && aliases.some(a => h.includes(a)))
-        columnMap[field] = i;
-    }
-  });
+
+  // Scan the first 5 rows and pick the one with the most field matches as the
+  // header row. This handles sheets that have a title/instruction row above the
+  // real headers (a single title cell mentioning "category" would only score 1,
+  // while the true header row with Date/Category/Amount/… scores 4–5).
+  let columnMap = {};
+  let headerRowIdx = 0;
+  let bestScore = 0;
+  for (let ri = 0; ri < Math.min(5, rows.length); ri++) {
+    const cells = rows[ri]?.values || [];
+    const map = {};
+    cells.forEach((cell, i) => {
+      const h = (cell.formattedValue || '').toLowerCase().trim();
+      if (!h) return;
+      for (const [field, aliases] of Object.entries(ALIASES)) {
+        if (map[field] == null && aliases.some(a => h.includes(a)))
+          map[field] = i;
+      }
+    });
+    const score = Object.keys(map).length;
+    if (score > bestScore) { bestScore = score; columnMap = map; headerRowIdx = ri; }
+  }
+
+  const dataRows = rows.slice(headerRowIdx + 1);
 
   // Pull category options by scanning rows 2–20 for the first cell in the
   // category column that carries a data-validation rule.
@@ -253,7 +265,9 @@ async function detectSheetFormat(config, token) {
     }
   }
 
-  return { columnMap, categories };
+  const headers = (rows[headerRowIdx]?.values || []).map(c => c.formattedValue || '');
+  console.log('raw headers:', headers, 'columnMap:', columnMap);
+  return { columnMap, categories, headers };
 }
 
 // Build an append row that respects the detected column order.
@@ -459,7 +473,7 @@ function ProcessingScreen({ imageData }) {
 /* ══════════════════════════════════
    REVIEW SCREEN
 ══════════════════════════════════ */
-function ReviewScreen({ imageData, receipt, onLog, onRetake, onSettings, logging, error, onDismissError, categories, columnMap }) {
+function ReviewScreen({ imageData, receipt, onLog, onRetake, onSettings, logging, error, onDismissError, categories, columnMap, detectedHeaders }) {
   const cats = categories || CATEGORIES;
   // Keep Claude's suggestion even if it's not in the sheet list (user can override)
   const catOptions = receipt.category && !cats.includes(receipt.category)
@@ -605,17 +619,22 @@ function ReviewScreen({ imageData, receipt, onLog, onRetake, onSettings, logging
       {(() => {
         const FIELD_LABELS = { date:'Date', store:'Store', category:'Category', total:'Total', notes:'Notes' };
         const colLetter = i => String.fromCharCode(65 + i);
+        const headerLine = detectedHeaders
+          ? <p style={{marginBottom:3}}>Sheet row 1: {detectedHeaders.map((h,i) => h ? `${colLetter(i)}="${h}"` : null).filter(Boolean).join(', ') || '(empty)'}</p>
+          : null;
         if (columnMap && Object.keys(columnMap).length > 0) {
           const parts = Object.entries(columnMap)
             .sort(([,a],[,b]) => a - b)
-            .map(([f, i]) => `${FIELD_LABELS[f] || f} → ${colLetter(i)}`);
-          return <p style={{fontSize:12,color:'var(--muted)',textAlign:'center',padding:'0 18px 10px'}}>
-            Columns: {parts.join(' · ')}
-          </p>;
+            .map(([f, i]) => `${FIELD_LABELS[f] || f}→${colLetter(i)}`);
+          return <div style={{padding:'0 18px 10px',fontSize:12,color:'var(--muted)',textAlign:'center'}}>
+            {headerLine}
+            <p>Mapped: {parts.join(' · ')}</p>
+          </div>;
         }
-        return <p style={{fontSize:12,color:'var(--warn)',textAlign:'center',padding:'0 18px 10px'}}>
-          ⚠️ No columns detected — using default order
-        </p>;
+        return <div style={{padding:'0 18px 10px',fontSize:12,color:'var(--warn)',textAlign:'center'}}>
+          {headerLine}
+          <p>⚠️ No columns detected — using default order</p>
+        </div>;
       })()}
 
       <div className="actions">
@@ -944,7 +963,7 @@ Today is ${todayISO()}.` },
     return <ReviewScreen imageData={imageData} receipt={receipt}
       onLog={handleLog} onRetake={reset} onSettings={() => setScreen('setup')}
       logging={logging} categories={sheetConfig?.categories}
-      columnMap={sheetConfig?.columnMap} {...commonProps} />;
+      columnMap={sheetConfig?.columnMap} detectedHeaders={sheetConfig?.headers} {...commonProps} />;
 
   if (screen === 'manual')
     return <ManualScreen parseError={parseError} onLog={handleLog}
