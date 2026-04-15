@@ -202,11 +202,8 @@ async function detectSheetFormat(config, token) {
   if (!res.ok) return null;
   const data = await res.json();
 
-  const rows        = data.sheets?.[0]?.data?.[0]?.rowData || [];
-  const headerCells = rows[0]?.values || [];
-  const dataRows    = rows.slice(1); // rows 2–20
+  const rows = data.sheets?.[0]?.data?.[0]?.rowData || [];
 
-  // Map each header to a known field.
   // "Description" in a budget sheet = the merchant/payee, so it belongs under store.
   const ALIASES = {
     date:     ['date', 'day', 'when', 'transaction date', 'purchase date'],
@@ -215,15 +212,30 @@ async function detectSheetFormat(config, token) {
     total:    ['total', 'amount', 'cost', 'price', 'sum', 'charge', 'spend'],
     notes:    ['notes', 'note', 'memo', 'comment', 'detail'],
   };
-  const columnMap = {};
-  headerCells.forEach((cell, i) => {
-    const h = (cell.formattedValue || '').toLowerCase().trim();
-    if (!h) return;
-    for (const [field, aliases] of Object.entries(ALIASES)) {
-      if (columnMap[field] == null && aliases.some(a => h.includes(a)))
-        columnMap[field] = i;
-    }
-  });
+
+  // Scan the first 5 rows and pick the one with the most field matches as the
+  // header row. This handles sheets that have a title/instruction row above the
+  // real headers (a single title cell mentioning "category" would only score 1,
+  // while the true header row with Date/Category/Amount/… scores 4–5).
+  let columnMap = {};
+  let headerRowIdx = 0;
+  let bestScore = 0;
+  for (let ri = 0; ri < Math.min(5, rows.length); ri++) {
+    const cells = rows[ri]?.values || [];
+    const map = {};
+    cells.forEach((cell, i) => {
+      const h = (cell.formattedValue || '').toLowerCase().trim();
+      if (!h) return;
+      for (const [field, aliases] of Object.entries(ALIASES)) {
+        if (map[field] == null && aliases.some(a => h.includes(a)))
+          map[field] = i;
+      }
+    });
+    const score = Object.keys(map).length;
+    if (score > bestScore) { bestScore = score; columnMap = map; headerRowIdx = ri; }
+  }
+
+  const dataRows = rows.slice(headerRowIdx + 1);
 
   // Pull category options by scanning rows 2–20 for the first cell in the
   // category column that carries a data-validation rule.
@@ -253,7 +265,7 @@ async function detectSheetFormat(config, token) {
     }
   }
 
-  const headers = headerCells.map(c => c.formattedValue || '');
+  const headers = (rows[headerRowIdx]?.values || []).map(c => c.formattedValue || '');
   console.log('raw headers:', headers, 'columnMap:', columnMap);
   return { columnMap, categories, headers };
 }
