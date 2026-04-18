@@ -446,9 +446,9 @@ function CaptureScreen({ onImage, onSettings, googleToken, config, error, onDism
         </div>
 
         <button className="cam-btn" onClick={() => fileRef.current.click()}>📷</button>
-        <p className="cam-hint">Tap to snap a photo<br/>or pick from gallery</p>
+        <p className="cam-hint">Tap to take a photo or choose from library</p>
 
-        <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handleFile} />
+        <input ref={fileRef} type="file" accept="image/*" onChange={handleFile} />
       </div>
     </div>
   );
